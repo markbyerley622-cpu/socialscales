@@ -3,7 +3,7 @@
 Resume point for a fresh session. Read this plus `docs/DECISIONS.md` and the
 diff; the conversation is not needed.
 
-**Last updated:** 2026-09-10 — intelligence programme phase 5 (asset ingestion + analysis)
+**Last updated:** 2026-09-10 — intelligence programme phase 6 (creative variants)
 
 ---
 
@@ -36,9 +36,9 @@ of the build phases above.
 | 2 | AI orchestration boundary | done — `abaf924` |
 | 3 | Strategy engine | done — `33dc642` |
 | 4 | Content director | done — `92ecdf8` |
-| 5 | Asset ingestion + analysis | **done — this pass** |
-| 6 | Creative variants | next |
-| 7 | Rendering | not started |
+| 5 | Asset ingestion + analysis | done — `295ce2d` |
+| 6 | Creative variants | **done — this pass** |
+| 7 | Rendering | next |
 | 8 | Distribution | not started |
 | 9 | Analytics | not started |
 | 10 | Intelligence | not started |
@@ -183,6 +183,38 @@ ceiling of the input, not a limitation of the plumbing.
 
 ---
 
+## Intelligence phase 6: creative treatments
+
+**One line:** a variant now carries a shootable treatment — ordered, timed beats
+with shots, on-screen text and voiceover — and its claim to deliver the brief's
+key message is checked against those beats rather than trusted.
+
+- `creative-treatment@1.0.0` produces beats, a narrative structure, a hook family
+  and a CTA placement, stored on `ContentVariant` with the provider, model and
+  prompt version that produced them.
+- `deliversKeyMessage` is validated, not accepted. If fewer than half the key
+  message's content words appear anywhere in the beats, a `true` is rejected. The
+  bar is low on purpose: it catches a treatment about something else entirely,
+  not a paraphrase.
+- An honest `false` is accepted, badged "Off brief" on the variant card, and
+  listed by `offBriefVariants()`. A treatment that misses the message is
+  sometimes the better content — that is an editorial call. It happening
+  unnoticed is not.
+- Structural rules enforced by repair: first beat starts at 0, beats do not
+  overlap, total runtime fits the brief's range, the opening beat carries the
+  hook rather than a title card, `null` means silence and an empty string is
+  rejected, and no banned phrase or prohibited topic appears on screen or in
+  voiceover.
+- A rejected treatment leaves the variant exactly as it was.
+
+**What is not proven:** the deterministic treatment is a three-beat
+hook/substance/ask skeleton fitted to the brief's length. It is genuinely
+shootable and its key-message claim is true by construction, but the shot
+descriptions are templates. Distinct creative direction per variant needs the
+model.
+
+---
+
 ## Live TikTok status in one line
 
 Every gate, guarantee and diagnostic around live TikTok publishing is built and
@@ -323,7 +355,7 @@ live-gate proof       2 jobs BLOCKED at PREFLIGHT with live mode on
 ## Where things are
 
 ```
-prisma/schema.prisma      37 models, 37 enums (6 migrations)
+prisma/schema.prisma      37 models, 37 enums (7 migrations)
 src/server/platforms/
   types.ts                capability model, AdapterFailure, PublicationEvidence
   dom.ts                  candidate resolution + drift diagnostics
@@ -355,23 +387,22 @@ src/server/ai/orchestration/
   status.ts               what the boundary is doing, for diagnostics
   providers/              deterministic · anthropic (inactive without a key)
   prompts/                asset-analysis · copy-variants · strategy-draft ·
-                          content-plan
+                          content-plan · creative-treatment
 worker/index.ts           6 queues, sweeper, heartbeat, reconciliation
 tests/                    unit · pipeline · live-publishing · publishing-gates ·
                           queue-reschedule (Redis-backed) ·
                           evidence-weighting · ai-orchestration ·
                           strategy-engine · content-director ·
-                          asset-analysis
+                          asset-analysis · creative-treatment
 ```
 
 ---
 
 ## Next concrete actions
 
-1. **Intelligence phase 6: creative variants.** Give a variant a structured
-   treatment — hook, beats, on-screen text, CTA placement — rather than only a
-   caption, and carry the brief's key message onto it so a variant can be checked
-   against what it was commissioned to say.
+1. **Intelligence phase 7: rendering.** Turn a treatment into a rendered cut with
+   ffmpeg — burned-in text per beat, trimmed to the beat timings — so what
+   publishes is what the treatment described rather than the raw upload.
 2. **Publish one real TikTok post.** Blocked only on a test account and a human
    sign-in. Everything else is in place.
 3. **Fix whatever selectors the live run breaks.** Expected.

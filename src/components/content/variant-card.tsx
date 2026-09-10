@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Pencil, Save, X } from "lucide-react";
-import { updateVariantAction } from "@/app/actions/posts";
+import { Clapperboard, Pencil, Save, TriangleAlert, X } from "lucide-react";
+import { updateVariantAction, writeTreatmentAction } from "@/app/actions/posts";
 import { ActionForm } from "@/components/ui/action-form";
 import { Button, SubmitButton } from "@/components/ui/button";
 import { Badge, Meter, SectionLabel } from "@/components/ui/primitives";
@@ -26,6 +26,26 @@ export type Scorecard = {
   cta: number;
   trendRelevance: number;
   notes: string[];
+};
+
+export type TreatmentBeatView = {
+  startSeconds: number;
+  endSeconds: number;
+  shot: string;
+  onScreenText: string | null;
+  voiceover: string | null;
+};
+
+export type TreatmentView = {
+  beats: TreatmentBeatView[];
+  narrativeStructure: string | null;
+  ctaPlacement: string | null;
+  /** Null when the variant has no brief to be checked against. */
+  deliversKeyMessage: boolean | null;
+  keyMessageNote: string | null;
+  generatedBy: string | null;
+  model: string | null;
+  promptVersion: string | null;
 };
 
 export type VariantEstimate = {
@@ -54,6 +74,7 @@ export function VariantCard({
   scorecard,
   estimate,
   usedInPosts,
+  treatment,
 }: {
   variantId: string;
   assetId: string;
@@ -66,6 +87,7 @@ export function VariantCard({
   scorecard: Scorecard | null;
   estimate: VariantEstimate | null;
   usedInPosts: number;
+  treatment: TreatmentView | null;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -75,6 +97,11 @@ export function VariantCard({
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone="neutral">{label}</Badge>
           {isControl ? <Badge tone="accent">Control</Badge> : null}
+          {treatment && treatment.deliversKeyMessage === false ? (
+            <Badge tone="warning" icon={<TriangleAlert />} title={treatment.keyMessageNote ?? undefined}>
+              Off brief
+            </Badge>
+          ) : null}
           {usedInPosts > 0 ? (
             <span className="text-[10.5px] tabular text-ink-muted">
               used in {usedInPosts} post{usedInPosts === 1 ? "" : "s"}
@@ -154,6 +181,69 @@ export function VariantCard({
               <span className="uppercase tracking-wider">CTA</span> · {cta}
             </p>
           ) : null}
+
+          <div className="border-t border-hairline pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <SectionLabel>Treatment</SectionLabel>
+              <ActionForm action={writeTreatmentAction}>
+                <input type="hidden" name="variantId" value={variantId} />
+                <SubmitButton variant="ghost" size="sm" pendingLabel="Writing…">
+                  <Clapperboard />
+                  {treatment ? "Rewrite" : "Write a treatment"}
+                </SubmitButton>
+              </ActionForm>
+            </div>
+
+            {treatment ? (
+              <div className="mt-2 space-y-2">
+                <p className="text-[10.5px] text-ink-muted">
+                  {treatment.narrativeStructure ?? "unstructured"}
+                  {treatment.ctaPlacement ? ` · CTA ${treatment.ctaPlacement.toLowerCase().replace(/_/g, " ")}` : ""}
+                  {" · "}
+                  {treatment.model ?? `${treatment.generatedBy ?? "rules"} — no language model`}
+                </p>
+                <ol className="space-y-1.5">
+                  {treatment.beats.map((beat, index) => (
+                    <li key={index} className="flex gap-2">
+                      <span className="tabular shrink-0 text-[10.5px] text-ink-muted">
+                        {beat.startSeconds}–{beat.endSeconds}s
+                      </span>
+                      <span className="min-w-0 text-[11.5px] leading-relaxed text-ink-secondary">
+                        {beat.shot}
+                        {beat.onScreenText ? (
+                          <span className="block text-ink-muted">
+                            On screen: “{beat.onScreenText}”
+                          </span>
+                        ) : null}
+                        {beat.voiceover ? (
+                          <span className="block text-ink-muted">
+                            Says: “{beat.voiceover}”
+                          </span>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                {treatment.keyMessageNote ? (
+                  <p
+                    className={
+                      treatment.deliversKeyMessage === false
+                        ? "text-[10.5px] leading-relaxed text-[#f6c455]"
+                        : "text-[10.5px] leading-relaxed text-ink-muted"
+                    }
+                  >
+                    {treatment.keyMessageNote}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-1.5 text-[10.5px] leading-relaxed text-ink-muted">
+                No treatment yet. A hook and a caption are not a shootable piece —
+                the treatment is the timed shot plan, checked against the brief it
+                was commissioned from.
+              </p>
+            )}
+          </div>
 
           <div className="grid gap-3 border-t border-hairline pt-3 sm:grid-cols-2">
             {scorecard ? (

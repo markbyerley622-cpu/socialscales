@@ -617,3 +617,45 @@ publishes fine.
 
 **Consequences.** Traceability is opt-in per asset. The asset screen offers the
 open briefs in a dropdown, and says plainly what is lost by leaving it unlinked.
+
+---
+
+## 2026-09-10 · The key-message claim is checked against the beats
+
+**Context.** A brief commissions a piece to say a particular thing. A treatment
+that does not say it is a different piece wearing the brief's name — and the
+treatment itself is the only thing that knows.
+
+**Decision.** `creative-treatment` output carries `deliversKeyMessage` plus a
+one-line note, and `refine` checks the claim against what was actually written:
+if fewer than half the key message's content words appear anywhere in the beats'
+shots, on-screen text or voiceover, a `true` is rejected. The deterministic
+implementation makes it true by construction — the middle beat speaks the key
+message verbatim — rather than asserting it.
+
+**Alternatives.** Trusting the flag; requiring delivery and rejecting anything
+else.
+
+**Rationale.** An unchecked self-report is worth nothing, and the bar is
+deliberately low — half the content words catches a treatment about something
+else entirely, not a paraphrase. Requiring delivery would be worse than trusting
+the flag: a treatment that misses the message is sometimes the better piece of
+content, and that is an editorial call. `offBriefVariants()` surfaces those
+rather than blocking them; what is unacceptable is it happening unnoticed.
+
+**Consequences.** An honest `false` is accepted and badged "Off brief" on the
+variant card, with the note explaining what is missing.
+
+---
+
+## 2026-09-10 · Null is silence; an empty string is a mistake
+
+**Context.** A beat with no voiceover and a beat with an empty voiceover are
+indistinguishable downstream, and generators reach for `""` readily.
+
+**Decision.** `refine` rejects a whitespace-only `voiceover` or `onScreenText`
+with the instruction to use `null`.
+
+**Rationale.** A renderer, an accessibility pass and a duration estimate all need
+to tell "deliberately silent" from "nobody filled this in". The distinction costs
+one validation rule now and is unrecoverable later.

@@ -13,3 +13,13 @@ export { strategyDraftPrompt, strategyDraftSchema } from "./strategy-draft";
 export type { StrategyDraftInput, StrategyDraftOutput } from "./strategy-draft";
 export { contentPlanPrompt, contentPlanSchema } from "./content-plan";
 export type { ContentPlanInput, ContentPlanOutput, PlannedBrief } from "./content-plan";
+export {
+  creativeTreatmentPrompt,
+  creativeTreatmentSchema,
+  CTA_PLACEMENTS,
+} from "./creative-treatment";
+export type {
+  CreativeTreatmentOutput,
+  TreatmentBeat,
+  TreatmentInput,
+} from "./creative-treatment";

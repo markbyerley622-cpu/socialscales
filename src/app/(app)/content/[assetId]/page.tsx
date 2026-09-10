@@ -12,6 +12,7 @@ import {
   createVariantAction,
 } from "@/app/actions/posts";
 import { openBriefs } from "@/server/content-director";
+import { readBeats } from "@/server/services/treatment-service";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import {
   Badge,
@@ -442,6 +443,20 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
                         : null
                     }
                     usedInPosts={variant._count.posts}
+                    treatment={
+                      variant.treatment
+                        ? {
+                            beats: readBeats(variant.treatment),
+                            narrativeStructure: variant.narrativeStructure,
+                            ctaPlacement: variant.ctaPlacement,
+                            deliversKeyMessage: variant.deliversKeyMessage,
+                            keyMessageNote: variant.keyMessageNote,
+                            generatedBy: variant.generatedBy,
+                            model: variant.model,
+                            promptVersion: variant.promptVersion,
+                          }
+                        : null
+                    }
                   />
                 ))}
               </div>

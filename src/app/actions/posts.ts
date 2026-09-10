@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { prisma } from "@/server/db";
 import { requireUser } from "@/server/auth/session";
 import {
   attachAssetToBrief,
   detachAssetFromBrief,
 } from "@/server/content-director";
+import { writeTreatment } from "@/server/services/treatment-service";
 import {
   approvePost,
   createPost,
@@ -331,5 +333,32 @@ export async function attachAssetToBriefAction(
     };
   } catch (error) {
     return fail(error, "Could not link the asset to that brief");
+  }
+}
+
+export async function writeTreatmentAction(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const variantId = String(formData.get("variantId") ?? "");
+    if (!variantId) return { ok: false, message: "Missing variant." };
+
+    const variant = await prisma.contentVariant.findUniqueOrThrow({
+      where: { id: variantId },
+      select: { assetId: true },
+    });
+    const result = await writeTreatment({ variantId });
+    revalidatePath(`/content/${variant.assetId}`);
+
+    if (!result.ok) {
+      return { ok: false, message: `Treatment rejected (${result.errorKind}): ${result.reason}` };
+    }
+    return {
+      ok: true,
+      message: result.deliversKeyMessage
+        ? `${result.beats} beats. It delivers the brief's key message.`
+        : `${result.beats} beats. Heads up — it does not deliver the brief's key message: ${result.keyMessageNote}`,
+    };
+  } catch (error) {
+    return fail(error, "Could not write a treatment");
   }
 }

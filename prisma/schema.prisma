@@ -642,8 +642,30 @@ model ContentVariant {
   isControl   Boolean  @default(false)
   /// AI heuristic scores (hook/clarity/curiosity/cta/trend). Not predictions.
   scorecard   Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  // --- Treatment (phase 6). A caption is not a shootable piece of content;
+  // --- the treatment is the shot-level plan that makes it one.
+
+  /// Which hook family this treatment belongs to, for grouping evidence later.
+  hookFamily         String?
+  narrativeStructure String?
+  /// Ordered beats with timings, shot description, on-screen text and voiceover.
+  treatment          Json?
+  /// Where the ask lands: END, MID, OVERLAY_THROUGHOUT or PINNED_COMMENT.
+  ctaPlacement       String?
+  /// Whether this treatment actually delivers its brief's key message, and the
+  /// one-line justification. Null when the variant has no brief to check against.
+  deliversKeyMessage Boolean?
+  keyMessageNote     String?
+
+  /// What produced this variant, so a template is never mistaken for a model.
+  generatedBy   String?
+  model         String?
+  promptVersion String?
+  aiJobId       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   asset              ContentAsset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
   createdBy          User?               @relation("VariantAuthor", fields: [createdById], references: [id], onDelete: SetNull)
@@ -651,6 +673,7 @@ model ContentVariant {
   experimentVariants ExperimentVariant[]
 
   @@index([assetId])
+  @@index([hookFamily])
 }
 
 // ---------------------------------------------------------------------------
@@ -1187,6 +1210,7 @@ enum AIJobStatus {
 enum AIOperation {
   ASSET_ANALYSIS
   COPY_VARIANTS
+  CREATIVE_TREATMENT
   STRATEGY_DRAFT
   CONTENT_PLAN
   HOOK_REWRITE
