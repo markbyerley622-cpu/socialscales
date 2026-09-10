@@ -10,6 +10,11 @@ import {
 } from "@/server/content-director";
 import { writeTreatment } from "@/server/services/treatment-service";
 import {
+  cancelRender,
+  enqueueRender,
+  RenderError,
+} from "@/server/rendering";
+import {
   approvePost,
   createPost,
   rejectPost,
@@ -360,5 +365,59 @@ export async function writeTreatmentAction(formData: FormData): Promise<ActionRe
     };
   } catch (error) {
     return fail(error, "Could not write a treatment");
+  }
+}
+
+export async function renderVariantAction(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const variantId = String(formData.get("variantId") ?? "");
+    if (!variantId) return { ok: false, message: "Missing variant." };
+    const force = formData.get("force") === "1";
+
+    const variant = await prisma.contentVariant.findUniqueOrThrow({
+      where: { id: variantId },
+      select: { assetId: true },
+    });
+
+    const result = await enqueueRender({ variantId, force });
+    revalidatePath(`/content/${variant.assetId}`);
+    revalidatePath("/renders");
+
+    if (!result.queued && result.status !== "SUCCEEDED") {
+      // The row exists either way, so the sweeper will pick it up once Redis is
+      // back. Saying "queued" here would be a lie the operator acts on.
+      return {
+        ok: false,
+        message: `The render is recorded but could not reach the queue: ${result.queueError ?? "unknown reason"}. It will start when the queue is reachable.`,
+      };
+    }
+    if (result.status === "SUCCEEDED") {
+      return { ok: true, message: "This exact cut has already been rendered." };
+    }
+    return {
+      ok: true,
+      message: result.reused
+        ? "This cut is already rendering."
+        : "Queued. The worker picks it up next.",
+    };
+  } catch (error) {
+    if (error instanceof RenderError) {
+      return { ok: false, message: `Cannot render: ${error.message}` };
+    }
+    return fail(error, "Could not queue a render");
+  }
+}
+
+export async function cancelRenderAction(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const renderJobId = String(formData.get("renderJobId") ?? "");
+    if (!renderJobId) return { ok: false, message: "Missing render job." };
+    await cancelRender(renderJobId);
+    revalidatePath("/renders");
+    return { ok: true, message: "Cancelled. A running encode stops at its next clip." };
+  } catch (error) {
+    return fail(error, "Could not cancel the render");
   }
 }

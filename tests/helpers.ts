@@ -1,5 +1,9 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readFileSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Client } from "pg";
 import { prisma } from "@/server/db";
 import { buildSampleMp4 } from "../prisma/sample-media";
@@ -63,6 +67,7 @@ export async function migrateTestSchema(): Promise<void> {
 }
 
 const TABLES = [
+  "RenderJob",
   "AIUsageLog", "AIJob",
   "ContentBrief", "ContentPlan",
   "RecommendationEvidence", "StrategyEvidence", "LearningEvidence",
@@ -225,4 +230,89 @@ export async function createVariantFixture(input: {
       },
     },
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Real media, for the renderer
+// ---------------------------------------------------------------------------
+
+/**
+ * A genuinely decodable MP4, built by ffmpeg.
+ *
+ * `sampleVideo()` above hand-assembles a container with a synthetic payload —
+ * enough for the probe and the upload path, and useless to a decoder. The
+ * renderer needs real frames, so these tests make real files.
+ */
+export function realSampleVideo(options: {
+  seconds?: number;
+  width?: number;
+  height?: number;
+  hz?: number;
+  silent?: boolean;
+} = {}): Buffer {
+  const seconds = options.seconds ?? 6;
+  const width = options.width ?? 640;
+  const height = options.height ?? 360;
+  const file = path.join(
+    os.tmpdir(),
+    `contentos-fixture-${randomUUID()}.mp4`,
+  );
+
+  const args = [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi",
+    "-i", `testsrc=size=${width}x${height}:rate=30:duration=${seconds}`,
+  ];
+  if (!options.silent) {
+    args.push("-f", "lavfi", "-i", `sine=frequency=${options.hz ?? 440}:duration=${seconds}`);
+  }
+  args.push(
+    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+    ...(options.silent ? [] : ["-c:a", "aac", "-shortest"]),
+    "-t", String(seconds),
+    file,
+  );
+
+  execFileSync("ffmpeg", args, { stdio: "pipe" });
+  try {
+    return readFileSync(file);
+  } finally {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // A leftover temp file is not worth failing a test over.
+    }
+  }
+}
+
+/** Whether the renderer can run here at all. Tests skip loudly rather than lie. */
+export function ffmpegAvailable(): boolean {
+  try {
+    execFileSync("ffmpeg", ["-hide_banner", "-version"], { stdio: "pipe" });
+    execFileSync("ffprobe", ["-hide_banner", "-version"], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function createRealAssetFixture(input: {
+  projectId: string;
+  uploaderId?: string | null;
+  filename?: string;
+  seconds?: number;
+  width?: number;
+  height?: number;
+  hz?: number;
+  silent?: boolean;
+}) {
+  const { asset } = await createAsset({
+    projectId: input.projectId,
+    uploaderId: input.uploaderId ?? null,
+    filename: input.filename ?? `real-${randomUUID()}.mp4`,
+    declaredMime: "video/mp4",
+    data: realSampleVideo(input),
+  });
+  return asset;
 }

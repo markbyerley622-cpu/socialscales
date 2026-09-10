@@ -6,6 +6,7 @@ import {
   Activity,
   BarChart3,
   ClipboardList,
+  Clapperboard,
   Compass,
   CalendarDays,
   FlaskConical,
@@ -54,6 +55,7 @@ function groups(counts: SidebarCounts): NavGroup[] {
         { href: "/projects", label: "Projects", icon: <Sparkles /> },
         { href: "/strategy", label: "Strategy", icon: <Compass /> },
         { href: "/plan", label: "Plan", icon: <ClipboardList /> },
+        { href: "/renders", label: "Renders", icon: <Clapperboard /> },
         { href: "/content", label: "Content", icon: <Video /> },
         { href: "/calendar", label: "Calendar", icon: <CalendarDays /> },
         {

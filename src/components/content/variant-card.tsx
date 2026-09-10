@@ -6,6 +6,7 @@ import { updateVariantAction, writeTreatmentAction } from "@/app/actions/posts";
 import { ActionForm } from "@/components/ui/action-form";
 import { Button, SubmitButton } from "@/components/ui/button";
 import { Badge, Meter, SectionLabel } from "@/components/ui/primitives";
+import { RenderPanel, type RenderView } from "@/components/content/render-panel";
 import { ConfidenceBadge } from "@/components/ui/status";
 import { multiple } from "@/lib/utils";
 import type { Confidence } from "@/generated/prisma/enums";
@@ -75,6 +76,7 @@ export function VariantCard({
   estimate,
   usedInPosts,
   treatment,
+  render,
 }: {
   variantId: string;
   assetId: string;
@@ -88,6 +90,7 @@ export function VariantCard({
   estimate: VariantEstimate | null;
   usedInPosts: number;
   treatment: TreatmentView | null;
+  render: RenderView | null;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -244,6 +247,17 @@ export function VariantCard({
               </p>
             )}
           </div>
+
+          <RenderPanel
+            variantId={variantId}
+            render={render}
+            canRender={treatment !== null}
+            blockedReason={
+              treatment === null
+                ? "Write a treatment first — the treatment is what says which shots to cut and how long each one runs."
+                : null
+            }
+          />
 
           <div className="grid gap-3 border-t border-hairline pt-3 sm:grid-cols-2">
             {scorecard ? (

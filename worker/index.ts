@@ -11,6 +11,7 @@ import {
   type ContentAnalysisJob,
   type PublishingJob,
   type RecommendationsJob,
+  type RenderingJob,
   type TrendDiscoveryJob,
 } from "@/server/jobs/queues";
 import { analyzeAsset } from "@/server/services/content-service";
@@ -28,6 +29,7 @@ import { refreshTrends } from "@/server/learning/trends";
 import { connectAccount, verifyAccount } from "@/server/automation/connect-account";
 import { pruneSessions } from "@/server/auth/session";
 import { reportWorkerStatus } from "@/server/jobs/worker-status";
+import { reclaimStaleRenders, runRenderJob } from "@/server/rendering";
 
 /**
  * The CONTENT OS worker.
@@ -225,6 +227,44 @@ workers.push(
 );
 
 // ---------------------------------------------------------------------------
+// rendering
+// ---------------------------------------------------------------------------
+
+workers.push(
+  new Worker<RenderingJob>(
+    QUEUE_NAMES.rendering,
+    async (job: Job<RenderingJob>) => {
+      log("rendering", `rendering job ${job.data.renderJobId}`);
+      const result = await runRenderJob(job.data.renderJobId);
+      log("rendering", `job ${job.data.renderJobId} -> ${result.outcome}`, {
+        outputAssetId: result.outputAssetId,
+        durationMs: result.durationMs,
+        errorKind: result.errorKind,
+      });
+
+      // BullMQ retries only what the runner says is worth retrying. A missing
+      // asset or an out-of-range trim fails identically every time, and burning
+      // three attempts on it just delays the operator seeing the real reason.
+      if (result.outcome === "failed" && result.retryable) {
+        throw new Error(result.error ?? "render failed");
+      }
+      return result;
+    },
+    {
+      connection,
+      prefix: QUEUE_PREFIX,
+      // One at a time: ffmpeg saturates the CPU on its own, and two concurrent
+      // encodes on one machine finish later than two sequential ones.
+      concurrency: 1,
+      // An encode can legitimately run for a long time without the worker
+      // touching Redis, and a lock that expires mid-render hands the same job to
+      // a second worker.
+      lockDuration: 30 * 60 * 1000,
+    },
+  ),
+);
+
+// ---------------------------------------------------------------------------
 // Periodic reconciliation, run in-process rather than as a queue
 // ---------------------------------------------------------------------------
 
@@ -249,6 +289,15 @@ const sweepTimer = setInterval(() => {
       if (count > 0) log("sweeper", `re-queued ${count} due job(s)`);
     })
     .catch((error) => log("sweeper", "failed", error));
+
+  // A worker killed mid-encode leaves a row saying RUNNING that nothing else
+  // will ever touch. Reclaiming it is safe because the idempotency key sends
+  // the retry to the same output location.
+  void reclaimStaleRenders()
+    .then((count) => {
+      if (count > 0) log("sweeper", `reclaimed ${count} stalled render(s)`);
+    })
+    .catch((error) => log("sweeper", "render reclaim failed", error));
 }, SWEEP_INTERVAL_MS);
 
 const pruneTimer = setInterval(() => {

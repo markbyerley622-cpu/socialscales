@@ -3,7 +3,7 @@
 Resume point for a fresh session. Read this plus `docs/DECISIONS.md` and the
 diff; the conversation is not needed.
 
-**Last updated:** 2026-09-10 — intelligence programme phase 6 (creative variants)
+**Last updated:** 2026-09-10 — intelligence programme phase 7 (rendering)
 
 ---
 
@@ -37,9 +37,9 @@ of the build phases above.
 | 3 | Strategy engine | done — `33dc642` |
 | 4 | Content director | done — `92ecdf8` |
 | 5 | Asset ingestion + analysis | done — `295ce2d` |
-| 6 | Creative variants | **done — this pass** |
-| 7 | Rendering | next |
-| 8 | Distribution | not started |
+| 6 | Creative variants | done — `29404aa` |
+| 7 | Rendering | **done — this pass** |
+| 8 | Distribution | next |
 | 9 | Analytics | not started |
 | 10 | Intelligence | not started |
 | 11 | Learning + experiments | not started |
@@ -215,6 +215,63 @@ model.
 
 ---
 
+## Intelligence phase 7: rendering
+
+**One line:** raw assets plus an approved treatment now become a real, playable
+1080×1920 H.264/AAC MP4, produced by ffmpeg in the worker and verified by probing
+the file before it is accepted.
+
+**Proven, against real media:** three treatments queued through `enqueueRender`,
+drained by the running worker, produced three distinct cuts — 1080×1920, H.264
+High profile, AAC stereo, 10.1s each, ~500KB — in 9.8–11.1s apiece. Each was
+probed independently with `ffprobe` afterwards, and each streams over the
+existing media route as `video/mp4` with a valid `ftyp` box. An anonymous request
+for one gets a 307 to `/login` and no video bytes.
+
+- `EditingProvider` is the editing boundary: an EDL and files in, one playable
+  file out. `ffmpegProvider` is the local implementation; a hosted renderer
+  slots in behind the same interface.
+- Two-stage render. Stage one trims, scales, pads and burns text per clip into a
+  normalised intermediate; stage two concatenates, mixes and encodes once. A
+  failure names the clip that broke rather than "error while filtering".
+- Aspect handling is `decrease` + `pad`: a landscape source is letterboxed into
+  9:16 rather than cropped, so the subject stays in shot.
+- Sources with no audio get generated silence, so the intermediate stream count
+  never varies and the concat demuxer stays safe.
+- Burned-in text uses `textfile=` rather than inline text — a caption is
+  user-supplied and inline escaping has to satisfy two nested parsers. Subtitles
+  come from the beats' voiceover with explicit libass styling.
+- `loudnorm` at -14 LUFS, an optional looped background bed with per-bed gain,
+  and source audio preserved unless the treatment mutes a beat.
+- **Idempotency:** the key is a hash of the variant and the resolved EDL, and the
+  output path derives from it. Re-enqueueing the same cut returned the same job
+  with no new row and no second file. A worker killed after the encode but before
+  the row is written leaves a complete file at the expected key, which the next
+  attempt adopts rather than re-encoding.
+- **Verification:** ffmpeg exiting zero is not accepted as success. The output is
+  probed for a real MP4 container, a video stream, H.264, the exact dimensions,
+  portrait orientation, non-zero duration, and a runtime within half of what the
+  EDL asked for — a short cut means clips were dropped, which otherwise reads as
+  success.
+- **Failure handling:** MISSING_ASSET, UNSUPPORTED_SOURCE, CORRUPT_MEDIA,
+  INVALID_TIMING, FFMPEG_UNAVAILABLE, FONT_UNAVAILABLE, FFMPEG_FAILED,
+  OUTPUT_MISSING, OUTPUT_INVALID, TIMEOUT and CANCELLED, each with a stage and a
+  retryable flag. The worker rethrows only what a retry could fix.
+- ffmpeg's stderr is sanitised before storage: the storage root and the app
+  directory are replaced, and anything still shaped like an absolute path loses
+  its directories.
+- The output is an ordinary `ContentAsset` with `origin: RENDER`, so approval,
+  scheduling and the TikTok publisher work on a cut with no changes. The Phase 2
+  publishing subsystem was not touched.
+- `/renders` shows every job for a project with stage, progress, attempts, the
+  failure and the encoder output; the variant card plays the finished cut inline.
+
+**What is not proven:** no rendered cut has been published to a real platform —
+that is still blocked on the TikTok account, unchanged from before. The renderer
+handles video sources only; still images fail explicitly rather than silently.
+
+---
+
 ## Live TikTok status in one line
 
 Every gate, guarantee and diagnostic around live TikTok publishing is built and
@@ -355,7 +412,7 @@ live-gate proof       2 jobs BLOCKED at PREFLIGHT with live mode on
 ## Where things are
 
 ```
-prisma/schema.prisma      37 models, 37 enums (7 migrations)
+prisma/schema.prisma      38 models, 40 enums (8 migrations)
 src/server/platforms/
   types.ts                capability model, AdapterFailure, PublicationEvidence
   dom.ts                  candidate resolution + drift diagnostics
@@ -378,6 +435,13 @@ src/server/strategy/
 src/server/content-director/
   context.ts              the plan window, cadence source, active strategy
   director.ts             plans, briefs, fulfilment, planned-vs-delivered
+src/server/rendering/
+  types.ts                EditingProvider, the EDL, classified failures
+  edl.ts                  treatment -> EDL, validation, idempotency key
+  ffmpeg-process.ts       spawning ffmpeg, log sanitisation, progress parsing
+  ffmpeg-provider.ts      the real two-stage local renderer
+  render-runner.ts        lifecycle, output verification, asset registration
+  render-service.ts       enqueue, cancel, reclaim stalled jobs
 src/server/ai/orchestration/
   run.ts                  runAiOperation — THE boundary
   registry.ts             versioned prompts + hashes
@@ -388,21 +452,21 @@ src/server/ai/orchestration/
   providers/              deterministic · anthropic (inactive without a key)
   prompts/                asset-analysis · copy-variants · strategy-draft ·
                           content-plan · creative-treatment
-worker/index.ts           6 queues, sweeper, heartbeat, reconciliation
+worker/index.ts           7 queues (incl. rendering), sweeper, heartbeat
 tests/                    unit · pipeline · live-publishing · publishing-gates ·
                           queue-reschedule (Redis-backed) ·
                           evidence-weighting · ai-orchestration ·
                           strategy-engine · content-director ·
-                          asset-analysis · creative-treatment
+                          asset-analysis · creative-treatment · rendering
 ```
 
 ---
 
 ## Next concrete actions
 
-1. **Intelligence phase 7: rendering.** Turn a treatment into a rendered cut with
-   ffmpeg — burned-in text per beat, trimmed to the beat timings — so what
-   publishes is what the treatment described rather than the raw upload.
+1. **Intelligence phase 8: distribution.** Take an approved render through
+   per-platform optimisation and into either a manual publish or the existing
+   automated TikTok path.
 2. **Publish one real TikTok post.** Blocked only on a test account and a human
    sign-in. Everything else is in place.
 3. **Fix whatever selectors the live run breaks.** Expected.
@@ -519,3 +583,18 @@ types or tests.
     `provider` test seam the strategy engine and content director already expose.
 19. **`createPost` returns `postId`, not a Post.** Worth knowing before writing
     `post.id` and getting `undefined` compared against a real value.
+
+### Intelligence phase 7
+
+20. **`-profile:v high` is rejected alongside `-c:v copy`.** ffmpeg tries to
+    parse "high" as a numeric constant for the copy codec and fails to open the
+    output entirely. It only showed up on cuts with no subtitles, because those
+    are the ones that stream-copy the video — the multi-beat fixtures all had
+    voiceover, so they burned subtitles, re-encoded, and passed. Profile and
+    level now go on the intermediates, which a copy inherits.
+21. **A scratch script that enqueues never exits.** BullMQ's connection keeps the
+    event loop alive, so a one-shot script must call `closeQueues()`. Cost an
+    hour of thinking a render had hung when it had actually finished in 7s.
+22. **`fetch` follows redirects by default,** so an anonymous request for
+    protected media reported 200 — the login page's. `redirect: "manual"` is
+    required to check an auth boundary from a script.

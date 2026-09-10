@@ -358,3 +358,79 @@ project's own schedule slots or from the strategy's cadence guess. The system
 ships no "best time to post" table: that would be a global prior wearing the
 costume of an account-specific recommendation, which is the conflation the
 evidence model exists to prevent.
+
+---
+
+## Rendering
+
+A treatment describes a cut. A render produces it.
+
+```
+ContentAsset (raw footage)  ContentVariant.treatment (beats)
+            \                        /
+             \                      /
+              buildEdlForVariant() ──> RenderEdl { clips[], audio, geometry }
+                        |                         + idempotencyKey
+                        v
+                   RenderJob (PENDING)
+                        |  queue: "rendering"
+                        v
+                   worker -> runRenderJob()
+                        |
+        VALIDATING -> PREPARING -> CLIPPING -> ASSEMBLING
+                   -> ENCODING -> PROBING -> REGISTERING -> DONE
+                        |
+                        v
+              ContentAsset (origin: RENDER, 1080x1920 H.264/AAC)
+                        |
+                        v
+              the existing approval / schedule / publish path
+```
+
+### Beats are output positions; an EDL adds source ranges
+
+A beat says "0 to 4 seconds is the hook". An EDL additionally says which frames
+of which file fill it. `assignClips()` decides that, consuming each source
+forward and moving to the next one when it runs dry. It is assembly, not shot
+selection, and it does not pretend otherwise.
+
+The EDL is stored on the job, so a render is reproducible from the record rather
+than from whatever the treatment says later.
+
+### Idempotency
+
+`idempotencyKey = sha256(variantId + stable(edl))`, and the output key is
+`renders/<projectId>/<idempotencyKey>.mp4`. Consequences:
+
+- Re-requesting the same cut returns the existing job — no second row, no second
+  file.
+- A retry after a worker was killed writes to the same place, and adopts a
+  complete file if the kill happened after the encode.
+- Changing anything about the cut changes the key, so it is a different render.
+
+The order of the final steps is deliberate: **probe → move → asset row.** Probing
+first keeps a broken encode from landing at the real key; writing the row last
+means a crash in between leaves a good file where the next attempt looks.
+
+### Failure kinds
+
+| Kind | Retryable | Means |
+|---|---|---|
+| `MISSING_ASSET` | no | A source row or its file is gone |
+| `UNSUPPORTED_SOURCE` | no | Not a video — stills are not supported yet |
+| `CORRUPT_MEDIA` | no | The decoder will not read it |
+| `INVALID_TIMING` | no | A clip asks for range the source does not have |
+| `FFMPEG_UNAVAILABLE` | no | ffmpeg or ffprobe is not on PATH |
+| `FONT_UNAVAILABLE` | no | Text was requested and no font was found |
+| `FFMPEG_FAILED` | yes | ffmpeg ran and exited non-zero |
+| `OUTPUT_MISSING` | yes | Exit zero, nothing written |
+| `OUTPUT_INVALID` | no | Written, but not a playable vertical MP4 |
+| `TIMEOUT` | yes | Killed at its budget |
+| `CANCELLED` | no | An operator stopped it |
+
+### Adding an editing backend
+
+Implement `EditingProvider` — `availability()`, `textSupport()`, `render()` and
+`probe()` — and pass it to `runRenderJob`. It receives an EDL and absolute paths,
+and returns one file plus its probe. It owns pixels; the runner owns the record,
+the idempotency, the storage location and the verification.

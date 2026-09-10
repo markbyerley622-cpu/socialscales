@@ -659,3 +659,109 @@ with the instruction to use `null`.
 **Rationale.** A renderer, an accessibility pass and a duration estimate all need
 to tell "deliberately silent" from "nobody filled this in". The distinction costs
 one validation rule now and is unrecoverable later.
+
+---
+
+## 2026-09-10 · Rendering is two ffmpeg passes, not one filter graph
+
+**Context.** A cut of N clips can be expressed as a single `filter_complex` with
+per-clip trim, scale, pad, drawtext and a concat at the end. It is one process
+and marginally faster.
+
+**Decision.** Two stages instead. Stage one writes a normalised intermediate per
+clip; stage two concatenates them, mixes audio and encodes once.
+
+**Alternatives.** The single graph; ffmpeg's `concat` filter rather than the
+demuxer.
+
+**Rationale.** The failure modes this has to report precisely are per-clip ones —
+a source that will not decode, a trim past the end, a font that will not load. In
+one graph they all surface as the same "Error while filtering" and the operator
+learns nothing. In two stages the failure names the clip, and the intermediates
+are still on disk to look at.
+
+**Consequences.** More temp files and a second encode of the audio. The
+intermediates are all forced to identical geometry, frame rate, sample rate and
+channel layout, which is what makes the concat demuxer safe — and sources with no
+audio get generated silence so the stream count never changes mid-timeline.
+
+---
+
+## 2026-09-10 · The output path is derived from the request, not assigned
+
+**Context.** A worker killed mid-render must not produce a second file on retry,
+and must not leave a half-written one that looks finished.
+
+**Decision.** `RenderJob.idempotencyKey` is a hash of the variant and the resolved
+EDL, and the output key is `renders/<projectId>/<key>.mp4`. The renderer writes to
+a scratch directory, probes the result, and only then moves it to that key. The
+`ContentAsset` row is written last.
+
+**Rationale.** Each ordering choice covers a specific crash point. Probing before
+the move means a broken encode never lands at the real key. Writing the asset row
+last means a crash between the move and the row leaves a *complete, correct* file
+exactly where the next attempt expects one — which `adoptExistingOutput()` then
+reuses rather than spending minutes reproducing identical bytes.
+
+**Consequences.** Re-rendering the same cut is free. Changing anything about the
+cut changes the key, so it is genuinely a different render with its own file.
+
+---
+
+## 2026-09-10 · A rendered cut is an ordinary ContentAsset
+
+**Context.** The output needs to be approved, scheduled and published. All three
+already work, on assets.
+
+**Decision.** The render output is a `ContentAsset` with `origin: RENDER`. No new
+path through approval, scheduling, the composer, the media route or the TikTok
+publisher.
+
+**Rationale.** The alternative — a separate "rendered output" entity with its own
+publishing path — would duplicate the most safety-critical code in the system for
+no gain. `origin` is enough to tell a cut from an upload wherever that matters,
+and the EDL builder uses it to make sure a previous render is never treated as
+raw footage for the next one.
+
+**Consequences.** The Phase 2 publishing subsystem is untouched by Phase 7. A
+rendered cut appears in the content library alongside its sources.
+
+---
+
+## 2026-09-10 · ffmpeg's exit code is not proof of a usable file
+
+**Context.** A broken filter chain can exit zero having written a valid but empty
+container, and a mis-specified scale produces a perfectly valid file of the wrong
+shape that fails later, at upload, with a worse error.
+
+**Decision.** `verifyOutputProbe()` runs ffprobe on the result and requires: a
+non-empty MP4 container, a video stream, H.264, exactly the specified dimensions,
+portrait orientation, a non-zero duration, and a runtime within half of what the
+EDL asked for. Anything else is `OUTPUT_INVALID` and no asset row is written.
+
+**Rationale.** The duration check is the one that earns its place: a cut that
+comes out a third of its planned length means clips were silently dropped, which
+otherwise reads as success.
+
+**Consequences.** Every accepted render has been probed. `RenderJob.outputProbe`
+stores the result, so what was verified is on the record rather than implied.
+
+---
+
+## 2026-09-10 · Retry only what a retry could fix
+
+**Context.** BullMQ will retry anything that throws. Most render failures are
+deterministic.
+
+**Decision.** `RenderErrorKind` carries a retryable flag. `FFMPEG_FAILED`,
+`OUTPUT_MISSING`, `TIMEOUT` and `UNKNOWN` are retryable; `MISSING_ASSET`,
+`INVALID_TIMING`, `UNSUPPORTED_SOURCE`, `CORRUPT_MEDIA`, `FFMPEG_UNAVAILABLE`,
+`FONT_UNAVAILABLE`, `OUTPUT_INVALID` and `CANCELLED` are not. The worker only
+rethrows for the retryable ones.
+
+**Rationale.** An out-of-range trim will fail identically three times over ninety
+seconds of backoff, and the operator sees the real reason a minute and a half
+later than they could have.
+
+**Consequences.** A non-retryable failure is final until someone acts. The
+renders screen offers a retry button for exactly that.

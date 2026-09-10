@@ -389,6 +389,7 @@ model Project {
   aiJobs          AIJob[]
   plans           ContentPlan[]
   briefs          ContentBrief[]
+  renders         RenderJob[]
 
   @@index([workspaceId])
 }
@@ -579,14 +580,17 @@ model ContentAsset {
 
   /// The brief this asset was made for, when it was made for one.
   briefId String?
+  /// Uploaded by a person, or produced by a render job.
+  origin  AssetOrigin @default(UPLOAD)
 
-  project  Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploader User?            @relation("AssetUploader", fields: [uploaderId], references: [id], onDelete: SetNull)
-  pillar   ContentPillar?   @relation(fields: [pillarId], references: [id], onDelete: SetNull)
-  brief    ContentBrief?    @relation(fields: [briefId], references: [id], onDelete: SetNull)
-  analyses AIAnalysis[]
-  variants ContentVariant[]
-  posts    Post[]
+  project    Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader   User?            @relation("AssetUploader", fields: [uploaderId], references: [id], onDelete: SetNull)
+  pillar     ContentPillar?   @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  brief      ContentBrief?    @relation(fields: [briefId], references: [id], onDelete: SetNull)
+  renderedBy RenderJob?       @relation("RenderOutput")
+  analyses   AIAnalysis[]
+  variants   ContentVariant[]
+  posts      Post[]
 
   @@unique([projectId, checksum])
   @@index([projectId, status])
@@ -671,6 +675,7 @@ model ContentVariant {
   createdBy          User?               @relation("VariantAuthor", fields: [createdById], references: [id], onDelete: SetNull)
   posts              Post[]
   experimentVariants ExperimentVariant[]
+  renders            RenderJob[]
 
   @@index([assetId])
   @@index([hookFamily])
@@ -1437,4 +1442,111 @@ model ContentBrief {
   @@unique([planId, sequence])
   @@index([projectId, status])
   @@index([plannedFor])
+}
+
+// ---------------------------------------------------------------------------
+// Rendering (Phase 7)
+//
+// A treatment describes a cut. A RenderJob is the attempt to actually produce
+// it, and its output is an ordinary ContentAsset — which means the existing
+// approval, scheduling and publishing path works on a rendered cut with no
+// changes at all.
+//
+// Rendering happens in the worker, never in a request. A render can take
+// minutes, and an HTTP timeout mid-encode would leave a half-written file with
+// nothing recording that it happened.
+// ---------------------------------------------------------------------------
+
+enum RenderStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+/// Where a render got to. Recorded on failure so "it broke" is never the answer.
+enum RenderStage {
+  QUEUED
+  /// Sources exist, are readable, and the requested time ranges are in range.
+  VALIDATING
+  /// Temp workspace, source probing, subtitle and text files.
+  PREPARING
+  /// Per-clip trim, scale, pad and text burn-in.
+  CLIPPING
+  /// Concatenation, audio normalisation, background bed.
+  ASSEMBLING
+  /// Final encode to H.264/AAC.
+  ENCODING
+  /// ffprobe of the produced file: real MP4, right size, non-zero duration.
+  PROBING
+  /// Moving the file to its deterministic key and writing the ContentAsset.
+  REGISTERING
+  CLEANUP
+  DONE
+}
+
+/// Where an asset came from. A rendered cut is not an upload.
+enum AssetOrigin {
+  UPLOAD
+  RENDER
+}
+
+model RenderJob {
+  id        String       @id @default(cuid())
+  projectId String
+  /// The creative variant whose treatment is being rendered.
+  variantId String
+  status    RenderStatus @default(PENDING)
+  stage     RenderStage  @default(QUEUED)
+
+  /// Hash of (variant, resolved EDL, provider). The same request retried after a
+  /// worker interruption reuses this row rather than producing a second output.
+  idempotencyKey String @unique
+
+  /// The resolved edit decision list actually rendered, so a run is reproducible
+  /// from the record rather than from whatever the treatment says today.
+  config         Json
+  /// Source assets in EDL order.
+  sourceAssetIds String[] @default([])
+
+  /// The rendered cut, once it exists. Unique: one job, one output.
+  outputAssetId String? @unique
+  /// Deterministic storage key. Written before the asset row, so a crash between
+  /// the two leaves a findable file rather than an orphan.
+  outputKey     String?
+
+  attempts Int @default(0)
+  /// 0..100. Advances per clip, so a long render is not a blank bar.
+  progress Int @default(0)
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+  /// Wall-clock of the successful attempt.
+  durationMs  Int?
+
+  /// The stage that failed, and a classified reason.
+  failureStage RenderStage?
+  errorKind    String?
+  error        String?
+  /// Tail of ffmpeg's stderr with absolute paths redacted. Never contains secrets.
+  logExcerpt   String?
+
+  /// ffprobe of the produced file — streams, dimensions, duration, codecs.
+  outputProbe Json?
+
+  /// Which provider produced it, so a change in editing backend is visible.
+  provider String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  variant     ContentVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  outputAsset ContentAsset?  @relation("RenderOutput", fields: [outputAssetId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, status])
+  @@index([variantId, createdAt])
+  @@index([status, startedAt])
 }

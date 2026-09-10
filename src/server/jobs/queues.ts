@@ -16,6 +16,7 @@ export const QUEUE_NAMES = {
   trendDiscovery: "trend-discovery",
   recommendations: "recommendations",
   accounts: "accounts",
+  rendering: "rendering",
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -46,6 +47,7 @@ export type RecommendationsJob = { projectId?: string };
 export type AccountsJob =
   | { action: "connect"; socialAccountId: string }
   | { action: "verify"; socialAccountId: string };
+export type RenderingJob = { renderJobId: string };
 
 const globalForQueues = globalThis as unknown as {
   contentOsQueues?: Map<string, Queue>;
@@ -73,6 +75,7 @@ export const queues = {
   trendDiscovery: () => getQueue<TrendDiscoveryJob>(QUEUE_NAMES.trendDiscovery),
   recommendations: () => getQueue<RecommendationsJob>(QUEUE_NAMES.recommendations),
   accounts: () => getQueue<AccountsJob>(QUEUE_NAMES.accounts),
+  rendering: () => getQueue<RenderingJob>(QUEUE_NAMES.rendering),
 };
 
 /**

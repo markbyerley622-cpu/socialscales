@@ -13,6 +13,7 @@ import {
 } from "@/app/actions/posts";
 import { openBriefs } from "@/server/content-director";
 import { readBeats } from "@/server/services/treatment-service";
+import { latestRenderForVariant } from "@/server/rendering";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import {
   Badge,
@@ -27,6 +28,7 @@ import {
 import { AssetThumb } from "@/components/content/asset-thumb";
 import { Composer, type ComposerAccount } from "@/components/content/composer";
 import { VariantCard, type Scorecard } from "@/components/content/variant-card";
+import type { RenderView } from "@/components/content/render-panel";
 import { ActionForm } from "@/components/ui/action-form";
 import { SubmitButton } from "@/components/ui/button";
 import { buttonClass } from "@/components/ui/button-styles";
@@ -98,6 +100,16 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
   // The production queue for this project, so an asset can be pointed at the
   // brief it was made for. The link is declared, never inferred.
   const briefs = await openBriefs(asset.projectId);
+  // The newest render per variant, so the card can show the cut itself rather
+  // than only a status.
+  const renders = new Map(
+    await Promise.all(
+      asset.variants.map(
+        async (variant) =>
+          [variant.id, await latestRenderForVariant(variant.id)] as const,
+      ),
+    ),
+  );
 
   // Per-account eligibility, decided by each platform adapter's own constraints.
   const accounts: ComposerAccount[] = asset.project.accounts.map((account) => {
@@ -443,6 +455,7 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
                         : null
                     }
                     usedInPosts={variant._count.posts}
+                    render={renderViewOf(renders.get(variant.id))}
                     treatment={
                       variant.treatment
                         ? {
@@ -578,6 +591,35 @@ function parseScorecard(value: unknown): Scorecard | null {
     cta: numeric("cta"),
     trendRelevance: numeric("trendRelevance"),
     notes: Array.isArray(record.notes) ? (record.notes as string[]) : [],
+  };
+}
+
+/** Narrows a render job row to what the card is allowed to show. */
+function renderViewOf(
+  job: Awaited<ReturnType<typeof latestRenderForVariant>> | undefined,
+): RenderView | null {
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    stage: job.stage,
+    progress: job.progress,
+    attempts: job.attempts,
+    durationMs: job.durationMs,
+    errorKind: job.errorKind,
+    error: job.error,
+    failureStage: job.failureStage,
+    logExcerpt: job.logExcerpt,
+    provider: job.provider,
+    output: job.outputAsset
+      ? {
+          storageKey: job.outputAsset.storageKey,
+          durationSeconds: job.outputAsset.durationSeconds,
+          width: job.outputAsset.width,
+          height: job.outputAsset.height,
+          sizeBytes: job.outputAsset.sizeBytes,
+        }
+      : null,
   };
 }
 
