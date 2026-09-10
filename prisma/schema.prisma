@@ -226,6 +226,75 @@ enum ActorType {
   WORKER
 }
 
+/// Where a piece of evidence came from, and therefore how much inferential
+/// weight it can carry. These are kept distinct for the whole life of a claim:
+/// a global prior must never quietly become an account-proven learning.
+enum EvidenceType {
+  /// This brand's own published results, features, analytics and feedback.
+  ACCOUNT_EVIDENCE
+  /// General creative/platform knowledge the system ships with. Proposes what
+  /// MAY work; proves nothing about this brand.
+  GLOBAL_PRIOR
+  /// Observations about the wider market: trends, competitors, benchmarks.
+  EXTERNAL_EVIDENCE
+  /// A controlled test run for this account, with a control and a variant.
+  EXPERIMENT_EVIDENCE
+}
+
+/// How a piece of evidence bears on a claim.
+enum EvidenceRelationship {
+  SUPPORTS
+  CONTRADICTS
+  /// Neither supports nor contradicts; supplies context that shapes reading.
+  CONTEXTUALIZES
+}
+
+/// Lifecycle of an account-specific learning. Nothing starts as truth.
+enum LearningStatus {
+  /// Proposed, not yet supported by account evidence.
+  HYPOTHESIS
+  /// Some supporting account evidence, below the reliability bar.
+  EMERGING
+  /// Enough consistent evidence to act on.
+  SUPPORTED
+  /// Contradictory evidence has accumulated against it.
+  WEAKENED
+  /// Replaced by a later learning.
+  SUPERSEDED
+}
+
+/// Business goals a brand can optimise for. Deliberately not view-centric.
+enum ObjectiveKind {
+  REACH
+  IMPRESSIONS
+  WATCH_TIME
+  RETENTION
+  FOLLOWERS
+  ENGAGEMENT
+  PROFILE_VISITS
+  WEBSITE_TRAFFIC
+  LEADS
+  BOOKINGS
+  PURCHASES
+  REVENUE
+  CUSTOM
+}
+
+enum AwarenessStage {
+  UNAWARE
+  PROBLEM_AWARE
+  SOLUTION_AWARE
+  PRODUCT_AWARE
+  MOST_AWARE
+}
+
+enum StrategyStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+  ARCHIVED
+}
+
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
@@ -269,8 +338,25 @@ model UserSession {
 // Projects and brand context
 // ---------------------------------------------------------------------------
 
+/// Tenant boundary. A Workspace owns brands, their evidence and their learnings.
+///
+/// Naming note: in this codebase a `Project` IS a brand (one product idea under
+/// test) and `Brand` is its profile. See docs/DOMAIN.md for the full map.
+model Workspace {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects  Project[]
+  evidence  EvidenceSource[]
+  learnings Learning[]
+}
+
 model Project {
   id          String        @id @default(cuid())
+  workspaceId String
   slug        String        @unique
   name        String
   description String?
@@ -282,7 +368,13 @@ model Project {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   brand           Brand?
+  objectives      BusinessObjective[]
+  audiences       AudienceSegment[]
+  strategies      StrategyVersion[]
+  evidence        EvidenceSource[]
+  learnings       Learning[]
   pillars         ContentPillar[]
   hashtags        Hashtag[]
   accounts        SocialAccount[]
@@ -293,6 +385,8 @@ model Project {
   experiments     Experiment[]
   recommendations Recommendation[]
   activity        ActivityLog[]
+
+  @@index([workspaceId])
 }
 
 /// The voice of a project. Kept separate from Project so brand copy can evolve
@@ -306,10 +400,74 @@ model Brand {
   website       String?
   primaryCta    String
   bannedPhrases String[] @default([])
+
+  // --- Identity (added in the intelligence phase; all optional so existing
+  // --- brands remain valid without backfill).
+  industry         String?
+  productsServices String[] @default([])
+  pricingNotes     String?
+  geography        String?
+  competitors      String[] @default([])
+  differentiators  String[] @default([])
+  /// Claims or topics this brand must never make. Enforced at copy generation.
+  prohibitedTopics String[] @default([])
+  visualStyle      String?
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+/// A goal the brand is optimising for, with the KPI that measures it.
+///
+/// Deliberately a list rather than a single field: real brands trade reach off
+/// against conversion, and the weighting is what lets performance analysis score
+/// a post against what the business actually wants rather than against views.
+model BusinessObjective {
+  id        String        @id @default(cuid())
+  projectId String
+  kind      ObjectiveKind
+  /// The measurable series, e.g. "profileVisits" or "conversions".
+  kpi       String
+  /// 1 = most important. Ties are allowed.
+  priority  Int           @default(1)
+  targetValue Float?
+  /// Relative pull in the objective score. Normalised at read time, so the
+  /// absolute numbers here carry no meaning on their own.
+  optimizationWeight Float @default(1)
+  /// What this KPI genuinely cannot see, e.g. "no click attribution on TikTok".
+  attributionLimitations String?
+  active    Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, active])
+}
+
+/// One audience the brand is speaking to.
+model AudienceSegment {
+  id          String         @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  /// Only what the operator deliberately supplies. Never inferred.
+  demographics Json          @default("{}")
+  pains       String[]       @default([])
+  desires     String[]       @default([])
+  objections  String[]       @default([])
+  motivations String[]       @default([])
+  awarenessStage AwarenessStage @default(PROBLEM_AWARE)
+  priority    Int            @default(1)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  strategies StrategyVersion[]
+
+  @@index([projectId])
 }
 
 model ContentPillar {
@@ -718,9 +876,17 @@ model Recommendation {
   /// Expected performance as a multiple of the project's median views.
   expectedLift        Float?
   sampleSize          Int                  @default(0)
+  /// What produced it, so a prior-driven suggestion is never mistaken for one
+  /// grounded in this account's own results.
+  generatedBy         String?
+  model               String?
+  promptVersion       String?
   createdAt           DateTime             @default(now())
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project       Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Traceable evidence links. Distinct from the legacy `evidence` JSON column,
+  /// which holds the raw numbers a recommendation was derived from.
+  evidenceLinks RecommendationEvidence[]
 
   @@index([projectId, status, confidence])
 }
@@ -768,4 +934,196 @@ model ActivityLog {
   @@index([createdAt])
   @@index([projectId, createdAt])
   @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Intelligence: evidence, learnings, strategy
+//
+// The central rule of this layer: evidence never loses its provenance. A global
+// prior stays a prior forever; it can inform a recommendation, but it can never
+// become "what works for this brand". Only account and experiment evidence can
+// do that, and only with enough sample behind them.
+// ---------------------------------------------------------------------------
+
+/// One observation that can bear on a strategic claim.
+///
+/// Deliberately one table with a discriminating `type` rather than four tables:
+/// every consumer has to weigh these against each other, and a single queryable
+/// surface is what makes that possible. The type is never erased.
+model EvidenceSource {
+  id          String       @id @default(cuid())
+  workspaceId String
+  /// Null for workspace-wide evidence such as a shipped global prior.
+  projectId   String?
+  type        EvidenceType
+
+  /// What produced it: "PostPlatform", "Experiment", "StaticPrior", "UserFeedback".
+  sourceEntityType String
+  sourceEntityId   String?
+  /// Which knowledge provider supplied it, for priors and external evidence.
+  provider         String?
+
+  /// Human-readable statement of what this observation shows.
+  claim     String
+  /// Creative/distribution dimension: "hook", "format", "timing", "length", "cta".
+  dimension String?
+  /// The group within that dimension, e.g. "problem_solution".
+  groupKey  String?
+
+  metric     String
+  value      Float?
+  /// What `value` is compared against, when there is a baseline.
+  baseline   Float?
+  /// Relative effect: (value - baseline) / baseline. Sign carries direction.
+  effectSize Float?
+  sampleSize Int    @default(0)
+  /// 0..1 as asserted by the producer. Weighting reads this; it does not trust
+  /// it on its own.
+  confidence Float  @default(0)
+
+  observedAt DateTime
+  /// External evidence goes stale; priors do not. Null means no expiry.
+  expiresAt  DateTime?
+
+  platform  Platform?
+  /// KPI this observation speaks to, when it is objective-specific.
+  objective String?
+  metadata  Json      @default("{}")
+  createdAt DateTime  @default(now())
+
+  workspace       Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project         Project?                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  learnings       LearningEvidence[]
+  recommendations RecommendationEvidence[]
+  strategies      StrategyEvidence[]
+
+  @@index([workspaceId, type])
+  @@index([projectId, dimension, groupKey])
+  @@index([observedAt])
+}
+
+/// An account-specific claim that has earned its way up from hypothesis.
+model Learning {
+  id          String         @id @default(cuid())
+  workspaceId String
+  /// Null means workspace-wide rather than brand-specific.
+  projectId   String?
+  claim       String
+  /// Where the claim applies: dimension, group, platform, objective.
+  scope       Json           @default("{}")
+  dimension   String?
+  groupKey    String?
+  metric      String
+  status      LearningStatus @default(HYPOTHESIS)
+  confidence  Confidence     @default(LOW)
+
+  supportingCount    Int    @default(0)
+  contradictingCount Int    @default(0)
+  sampleSize         Int    @default(0)
+  effectSize         Float?
+
+  /// Set when a later learning replaces this one. History is never deleted.
+  supersededById String?   @unique
+  supersededBy   Learning? @relation("LearningSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     Learning? @relation("LearningSupersession")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  evidence  LearningEvidence[]
+
+  @@index([workspaceId, status])
+  @@index([projectId, dimension, status])
+}
+
+model LearningEvidence {
+  learningId       String
+  evidenceSourceId String
+  relationship     EvidenceRelationship @default(SUPPORTS)
+  /// 0..1 contribution after weighting, recorded so the UI can show its work.
+  strength         Float                @default(0)
+  createdAt        DateTime             @default(now())
+
+  learning Learning       @relation(fields: [learningId], references: [id], onDelete: Cascade)
+  evidence EvidenceSource @relation(fields: [evidenceSourceId], references: [id], onDelete: Cascade)
+
+  @@id([learningId, evidenceSourceId])
+  @@index([evidenceSourceId])
+}
+
+/// An immutable snapshot of the strategy at a point in time.
+model StrategyVersion {
+  id      String         @id @default(cuid())
+  projectId String
+  version Int
+  status  StrategyStatus @default(DRAFT)
+  summary String
+
+  targetAudienceId     String?
+  primaryObjectiveId   String?
+  secondaryObjectiveId String?
+
+  contentPillars      String[]   @default([])
+  recommendedFormats  String[]   @default([])
+  hookFamilies        String[]   @default([])
+  narrativeStructures String[]   @default([])
+  ctaStrategy         String?
+  platformStrategy    Json       @default("{}")
+  cadence             Json       @default("{}")
+  hypotheses          Json       @default("[]")
+  risks               Json       @default("[]")
+  /// Snapshot of the account's state when this strategy was written.
+  accountState        Json       @default("{}")
+  confidence          Confidence @default(LOW)
+
+  /// Which provider and prompt produced it, so output is always attributable.
+  generatedBy   String
+  model         String?
+  promptVersion String?
+
+  supersededById String?          @unique
+  supersededBy   StrategyVersion? @relation("StrategySupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     StrategyVersion? @relation("StrategySupersession")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project        Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targetAudience AudienceSegment?   @relation(fields: [targetAudienceId], references: [id], onDelete: SetNull)
+  evidence       StrategyEvidence[]
+
+  @@unique([projectId, version])
+  @@index([projectId, status])
+}
+
+model StrategyEvidence {
+  strategyVersionId String
+  evidenceSourceId  String
+  relationship      EvidenceRelationship @default(SUPPORTS)
+  strength          Float                @default(0)
+  /// Which strategy decision this evidence backs, e.g. "hookFamilies".
+  decision          String?
+  createdAt         DateTime             @default(now())
+
+  strategyVersion StrategyVersion @relation(fields: [strategyVersionId], references: [id], onDelete: Cascade)
+  evidence        EvidenceSource  @relation(fields: [evidenceSourceId], references: [id], onDelete: Cascade)
+
+  @@id([strategyVersionId, evidenceSourceId])
+  @@index([evidenceSourceId])
+}
+
+model RecommendationEvidence {
+  recommendationId String
+  evidenceSourceId String
+  relationship     EvidenceRelationship @default(SUPPORTS)
+  strength         Float                @default(0)
+  createdAt        DateTime             @default(now())
+
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  evidence       EvidenceSource @relation(fields: [evidenceSourceId], references: [id], onDelete: Cascade)
+
+  @@id([recommendationId, evidenceSourceId])
+  @@index([evidenceSourceId])
 }

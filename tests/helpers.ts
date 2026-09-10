@@ -63,6 +63,9 @@ export async function migrateTestSchema(): Promise<void> {
 }
 
 const TABLES = [
+  "RecommendationEvidence", "StrategyEvidence", "LearningEvidence",
+  "StrategyVersion", "Learning", "EvidenceSource",
+  "AudienceSegment", "BusinessObjective", "Workspace",
   "ActivityLog", "Recommendation", "ExperimentVariant", "Experiment", "Trend",
   "AnalyticsSnapshot", "PublishAttempt", "PublishJob", "PostPlatform", "Post",
   "ContentVariant", "AIAnalysis", "ContentAsset", "ScheduleSlot", "Schedule",
@@ -111,13 +114,27 @@ export async function createOperator(email = "test@contentos.local") {
 
 export type Fixture = Awaited<ReturnType<typeof createProjectFixture>>;
 
+/** A workspace, created on demand and reused within a test. */
+export async function ensureWorkspace(slug = "test-workspace") {
+  return prisma.workspace.upsert({
+    where: { slug },
+    create: { slug, name: "Test workspace" },
+    update: {},
+  });
+}
+
 export async function createProjectFixture(options: {
   slug?: string;
   publishPolicy?: PublishPolicy;
   platforms?: Platform[];
+  workspaceId?: string;
 } = {}) {
+  const workspaceId =
+    options.workspaceId ?? (await ensureWorkspace()).id;
+
   const project = await prisma.project.create({
     data: {
+      workspaceId,
       slug: options.slug ?? `test-project-${Math.random().toString(36).slice(2, 8)}`,
       name: "Test Project",
       description: "Fixture project",

@@ -9,6 +9,7 @@ import { refreshTrends } from "../src/server/learning/trends";
 import { getAiProvider } from "../src/server/ai";
 import { closeQueues, queues } from "../src/server/jobs/queues";
 import { buildBrandContext } from "../src/server/services/brand-context";
+import { ingestAllKnowledge } from "../src/server/knowledge";
 import { buildSampleMp4, buildSamplePng, hexToRgb } from "./sample-media";
 import { SEED_EXPERIMENTS, SEED_PROJECTS, type SeedHook } from "./seed-data";
 import {
@@ -80,6 +81,9 @@ async function reset(): Promise<void> {
   // TRUNCATE ... CASCADE is far faster than cascading deletes through Prisma and
   // resets everything in one statement.
   const tables = [
+    "RecommendationEvidence", "StrategyEvidence", "LearningEvidence",
+    "StrategyVersion", "Learning", "EvidenceSource",
+    "AudienceSegment", "BusinessObjective", "Workspace",
     "ActivityLog", "Recommendation", "ExperimentVariant", "Experiment", "Trend",
     "AnalyticsSnapshot", "PublishAttempt", "PublishJob", "PostPlatform", "Post",
     "ContentVariant", "AIAnalysis", "ContentAsset", "ScheduleSlot", "Schedule",
@@ -136,9 +140,16 @@ type ProjectContext = {
 async function seedProjects(operatorId: string): Promise<ProjectContext[]> {
   const contexts: ProjectContext[] = [];
 
+  // Every brand lives in a workspace. One is enough for a single-operator install.
+  const workspace = await prisma.workspace.create({
+    data: { slug: "default", name: "Default workspace" },
+  });
+  log(`workspace: ${workspace.slug}`);
+
   for (const spec of SEED_PROJECTS) {
     const project = await prisma.project.create({
       data: {
+        workspaceId: workspace.id,
         slug: spec.slug,
         name: spec.name,
         description: spec.description,
@@ -645,6 +656,17 @@ async function main(): Promise<void> {
   const publishedTargets = await seedHistory(projects, operatorId);
   await seedPipeline(projects, operatorId);
   await seedExperiments(projects);
+
+  // Global priors: the cold-start knowledge every workspace starts with. Stored
+  // as GLOBAL_PRIOR evidence, so they can inform planning but can never be
+  // mistaken for something these brands demonstrated.
+  const workspaceId = (
+    await prisma.workspace.findFirstOrThrow({ where: { slug: "default" } })
+  ).id;
+  const ingested = await ingestAllKnowledge({ workspaceId });
+  log(
+    `priors: ${ingested.reduce((sum, r) => sum + r.written, 0)} global prior(s) from ${ingested.length} provider(s)`,
+  );
 
   // Real snapshot capture through the real code path, honouring age buckets.
   log("capturing analytics snapshots through the normal sync path...");
