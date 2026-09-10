@@ -209,6 +209,8 @@ means implementing one function with the same return shape.
 | `AI_PROVIDER` | no | `heuristic` (default) |
 | `ENABLE_LIVE_PUBLISHING` | no | `1` to drive real browsers against real accounts |
 | `PLAYWRIGHT_HEADLESS` | no | Must be `0` to connect an account by hand |
+| `QUEUE_PREFIX` | no | Redis key namespace for the queues. Default `bull` |
+| `SIMULATED_FAILURE_RATE` | no | Fraction of first attempts the simulator fails, 0..1. Default `0.125` |
 | `TEST_DATABASE_URL` | no | Overrides the derived `<db>_test` database |
 
 Generate the two secrets:
@@ -287,16 +289,21 @@ a screenshot of what it saw, and asks a person to finish it.
 
 ## Known limitations
 
-1. **Live publishing is unverified against real platforms.** The adapters carry
-   real URLs and multi-candidate selector strategies, but they have only been
-   exercised against the simulator. Platform DOMs drift; expect to fix selectors.
+1. **Live publishing is unverified against real platforms.** The gates around it
+   — connection checks, blocking, idempotency, classification, verification,
+   observability — are built and tested, but no real post has been published. The
+   adapters carry real URLs and multi-candidate selector strategies that have only
+   ever run against the simulator. Platform DOMs drift; expect to fix selectors on
+   first contact. TikTok is **live-ready, not live-proven**.
 2. **No transcription.** The heuristic provider reads the filename, the content
    pillar and the probed container facts. It says so rather than inventing a
    transcript.
 3. **WebM duration is not probed.** MP4/MOV/PNG/JPEG are; WebM reports `null`
    rather than a guess.
-4. **Analytics collection from live platforms is not implemented.** The
-   `collectMetrics` hook exists on the adapter interface and is unimplemented.
+4. **Live analytics are implemented for TikTok but unverified.** `collectMetrics`
+   reads the operator's own post analytics from their own Studio session. Metrics
+   Studio does not show are left absent rather than defaulted to zero. Instagram
+   and YouTube still have no implementation.
 5. **Single operator.** The schema carries roles and the audit trail is per-user,
    but there is no invite flow or per-project membership yet.
 6. **Storage is local disk.** Swapping in S3 means implementing the same

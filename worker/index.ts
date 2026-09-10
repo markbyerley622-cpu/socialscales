@@ -4,6 +4,7 @@ import { env } from "@/env";
 import { prisma } from "@/server/db";
 import {
   QUEUE_NAMES,
+  QUEUE_PREFIX,
   connection,
   type AccountsJob,
   type AnalyticsSyncJob,
@@ -13,13 +14,20 @@ import {
   type TrendDiscoveryJob,
 } from "@/server/jobs/queues";
 import { analyzeAsset } from "@/server/services/content-service";
-import { runPublishJob } from "@/server/automation/publish-runner";
-import { sweepDueJobs } from "@/server/services/publish-service";
+import {
+  reconcileUnverified,
+  runPublishJob,
+} from "@/server/automation/publish-runner";
+import {
+  sweepDueJobs,
+  unblockAccountJobs,
+} from "@/server/services/publish-service";
 import { syncAnalytics } from "@/server/analytics/snapshots";
 import { refreshRecommendations } from "@/server/learning/recommendations";
 import { refreshTrends } from "@/server/learning/trends";
 import { connectAccount, verifyAccount } from "@/server/automation/connect-account";
 import { pruneSessions } from "@/server/auth/session";
+import { reportWorkerStatus } from "@/server/jobs/worker-status";
 
 /**
  * The CONTENT OS worker.
@@ -58,7 +66,7 @@ workers.push(
       );
       return result;
     },
-    { connection, concurrency: 4 },
+    { connection, prefix: QUEUE_PREFIX, concurrency: 4 },
   ),
 );
 
@@ -80,7 +88,7 @@ workers.push(
       }
       return result;
     },
-    { connection, concurrency: 1 },
+    { connection, prefix: QUEUE_PREFIX, concurrency: 1 },
   ),
 );
 
@@ -109,7 +117,7 @@ workers.push(
       }
       return summary;
     },
-    { connection, concurrency: 2 },
+    { connection, prefix: QUEUE_PREFIX, concurrency: 2 },
   ),
 );
 
@@ -131,7 +139,7 @@ workers.push(
       log("trend-discovery", `recorded ${total} observation(s)`);
       return { recorded: total };
     },
-    { connection, concurrency: 1 },
+    { connection, prefix: QUEUE_PREFIX, concurrency: 1 },
   ),
 );
 
@@ -154,7 +162,7 @@ workers.push(
       log("recommendations", `created ${created} recommendation(s)`);
       return { created };
     },
-    { connection, concurrency: 1 },
+    { connection, prefix: QUEUE_PREFIX, concurrency: 1 },
   ),
 );
 
@@ -166,17 +174,53 @@ workers.push(
   new Worker<AccountsJob>(
     QUEUE_NAMES.accounts,
     async (job: Job<AccountsJob>) => {
+      const { socialAccountId } = job.data;
+
       if (job.data.action === "connect") {
-        log("accounts", `opening a browser for ${job.data.socialAccountId}`);
-        const result = await connectAccount(job.data.socialAccountId);
+        log("accounts", `opening a browser for ${socialAccountId}`);
+        const result = await connectAccount(socialAccountId);
         log("accounts", `connect → ${result.ok ? "connected" : result.reason}`);
+        if (result.ok) {
+          // Jobs blocked while the account was disconnected were never
+          // attempted, so reconnecting simply makes them runnable again.
+          const released = await unblockAccountJobs(socialAccountId);
+          if (released > 0) {
+            log("accounts", `released ${released} blocked publish job(s)`);
+          }
+        }
         return result;
       }
-      const result = await verifyAccount(job.data.socialAccountId);
+
+      const result = await verifyAccount(socialAccountId);
       log("accounts", `verify → ${result.ok ? "valid" : result.reason}`);
+      if (result.ok) {
+        const released = await unblockAccountJobs(socialAccountId);
+        if (released > 0) {
+          log("accounts", `released ${released} blocked publish job(s)`);
+        }
+
+        // The session is open and known good, so this is the cheapest moment to
+        // confirm any publication whose verification was interrupted.
+        try {
+          const reconciled = await reconcileUnverified(socialAccountId);
+          if (reconciled.checked > 0) {
+            log(
+              "accounts",
+              `reconciled ${reconciled.verified}/${reconciled.checked} unverified publication(s)`,
+            );
+          }
+        } catch (error) {
+          log("accounts", "reconciliation failed", error);
+        }
+      }
       return result;
     },
-    { connection, concurrency: 1, lockDuration: 10 * 60 * 1000 },
+    {
+      connection,
+      prefix: QUEUE_PREFIX,
+      concurrency: 1,
+      lockDuration: 10 * 60 * 1000,
+    },
   ),
 );
 
@@ -187,7 +231,19 @@ workers.push(
 const SWEEP_INTERVAL_MS = 60_000;
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
+// The console reads this to report whether publishing is actually live, rather
+// than guessing from its own environment.
+const WORKER_STARTED_AT = new Date();
+void reportWorkerStatus(WORKER_STARTED_AT).catch((error) =>
+  log("worker", "could not record worker status", error),
+);
+
+const heartbeatTimer = setInterval(() => {
+  void reportWorkerStatus(WORKER_STARTED_AT).catch(() => {});
+}, SWEEP_INTERVAL_MS);
+
 const sweepTimer = setInterval(() => {
+  void reportWorkerStatus(WORKER_STARTED_AT).catch(() => {});
   void sweepDueJobs()
     .then((count) => {
       if (count > 0) log("sweeper", `re-queued ${count} due job(s)`);
@@ -231,6 +287,7 @@ async function shutdown(signal: string): Promise<void> {
   log("worker", `${signal} received, draining`);
   clearInterval(sweepTimer);
   clearInterval(pruneTimer);
+  clearInterval(heartbeatTimer);
   await Promise.all(workers.map((worker) => worker.close()));
   await prisma.$disconnect();
   process.exit(0);

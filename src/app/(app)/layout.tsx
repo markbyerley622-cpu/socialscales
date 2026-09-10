@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AlertTriangle, LogOut } from "lucide-react";
-import { env } from "@/env";
+import { effectivePublishingMode } from "@/server/jobs/worker-status";
 import { prisma } from "@/server/db";
 import { getCurrentUser } from "@/server/auth/session";
 import { logoutAction } from "@/app/actions/auth";
@@ -28,7 +28,8 @@ export default async function AppLayout({
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [needsApproval, queued, failed, openRecommendations] = await Promise.all([
+  const [publishing, needsApproval, queued, failed, openRecommendations] = await Promise.all([
+    effectivePublishingMode(),
     prisma.post.count({ where: { approvalState: ApprovalState.PENDING } }),
     prisma.publishJob.count({
       where: { status: { in: [JobStatus.PENDING, JobStatus.QUEUED] } },
@@ -128,19 +129,44 @@ export default async function AppLayout({
           </div>
         </div>
 
-        {env.enableLivePublishing ? (
-          <div className="flex items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-1.5 text-[11.5px] text-[#f6c455]">
+        {/*
+          Reports the WORKER's mode, not this process's. The worker is what
+          publishes, and in a real deployment the two processes have separate
+          environments — a console that says "simulation" while the worker
+          publishes for real would be worse than showing nothing.
+        */}
+        {publishing.live ? (
+          <div className="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-1.5 text-[11.5px] text-[#f6c455]">
             <AlertTriangle className="size-3.5 shrink-0" />
             Live publishing is enabled. Approved posts will be published to real
             accounts by the worker.
+            {publishing.source === "local-config" ? (
+              <span className="text-ink-muted">
+                (from this process&rsquo;s configuration — no worker has checked in)
+              </span>
+            ) : null}
+            {publishing.disagrees ? (
+              <span className="text-[#ec7d7d]">
+                The web process is configured for simulation; the worker decides, and
+                it is live.
+              </span>
+            ) : null}
           </div>
         ) : (
-          <div className="flex items-center gap-2 border-b border-hairline bg-surface/60 px-4 py-1.5 text-[11px] text-ink-muted">
+          <div className="flex flex-wrap items-center gap-2 border-b border-hairline bg-surface/60 px-4 py-1.5 text-[11px] text-ink-muted">
             <AlertTriangle className="size-3.5 shrink-0 text-serious" />
             Simulation mode: the worker runs the publish simulator and all metrics
             are labelled <span className="text-ink-secondary">Simulated</span>. Set{" "}
             <code className="text-ink-secondary">ENABLE_LIVE_PUBLISHING=1</code> to
             publish for real.
+            {publishing.source === "local-config" ? (
+              <span>· no worker has checked in, so this is this process&rsquo;s own setting</span>
+            ) : null}
+            {publishing.disagrees ? (
+              <span className="text-[#f6c455]">
+                · this process is configured for live publishing, but the worker is not
+              </span>
+            ) : null}
           </div>
         )}
 

@@ -31,6 +31,14 @@ process.env.AUTH_COOKIE_SECRET ??= "test-cookie-secret-not-used-in-production";
 process.env.ENABLE_LIVE_PUBLISHING = "0";
 process.env.AI_PROVIDER = "heuristic";
 process.env.STORAGE_DIR = "./storage/test";
+// Namespaces the BullMQ keys so a Redis-backed test can never consume, promote
+// or delete a development job.
+process.env.QUEUE_PREFIX = "bull-test";
+// The simulator's failure injection is deterministic per destination id, but
+// ids are random per run — so leaving it on makes roughly one run in eight fail
+// for reasons unrelated to what is being tested. Tests that want the failure
+// path turn it on explicitly.
+process.env.SIMULATED_FAILURE_RATE = "0";
 
 /** postgresql://…/contentos → postgresql://…/contentos_test */
 export function toTestDatabase(url: string): string {

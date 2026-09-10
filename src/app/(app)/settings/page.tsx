@@ -3,6 +3,10 @@ import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { prisma } from "@/server/db";
 import { env } from "@/env";
 import { queueHealth } from "@/server/jobs/queues";
+import {
+  effectivePublishingMode,
+  readWorkerStatus,
+} from "@/server/jobs/worker-status";
 import { listAdapters } from "@/server/platforms/registry";
 import { getAiProvider, listProviders } from "@/server/ai";
 import { exists } from "@/server/storage";
@@ -39,8 +43,11 @@ const POLICY_DESCRIPTIONS: Record<PublishPolicy, string> = {
  * everything a person needs to answer "why is nothing publishing?".
  */
 export default async function SettingsPage() {
-  const [projects, redis, users, counts, storageCheck] = await Promise.all([
-    prisma.project.findMany({
+  const [worker, publishing, projects, redis, users, counts, storageCheck] =
+    await Promise.all([
+      readWorkerStatus(),
+      effectivePublishingMode(),
+      prisma.project.findMany({
       orderBy: { createdAt: "asc" },
       include: { brand: true, _count: { select: { accounts: true, assets: true, posts: true } } },
     }),
@@ -104,15 +111,35 @@ export default async function SettingsPage() {
               }
             />
             <CheckRow
-              ok={!env.enableLivePublishing}
+              ok={worker?.online ?? false}
+              okLabel="Online"
+              failLabel="Not running"
+              warnOnly
+              label="Publishing worker"
+              detail={
+                worker
+                  ? worker.online
+                    ? `Checked in ${dateTimeLabel(worker.lastSeenAt)}${worker.hostname ? ` from ${worker.hostname}` : ""}, up since ${dateTimeLabel(worker.startedAt)}. Queue prefix "${worker.queuePrefix}".`
+                    : `Last checked in ${dateTimeLabel(worker.lastSeenAt)} and has gone quiet. Nothing will publish until it is running again — start it with \`npm run worker\`.`
+                  : "No worker has ever checked in. Scheduled posts will sit in the queue until one runs."
+              }
+            />
+            <CheckRow
+              ok={!publishing.live}
               okLabel="Simulation"
               failLabel="LIVE"
               warnOnly
               label="Publishing mode"
               detail={
-                env.enableLivePublishing
-                  ? "ENABLE_LIVE_PUBLISHING is on. The worker will drive real browsers against real accounts."
-                  : "ENABLE_LIVE_PUBLISHING is off. The worker runs the publish simulator, and every metric it produces is stamped SIMULATED."
+                (publishing.live
+                  ? "Publishing is LIVE: the worker drives real browsers against real accounts."
+                  : "Simulation: the worker runs the publish simulator, and every metric it produces is stamped SIMULATED.") +
+                (publishing.source === "worker"
+                  ? " Reported by the worker itself, which is what actually publishes."
+                  : " No worker has checked in, so this reflects this web process's own configuration and may not match the worker's.") +
+                (publishing.disagrees
+                  ? ` This web process is configured for ${env.enableLivePublishing ? "live publishing" : "simulation"}, which disagrees with the worker. The worker decides.`
+                  : "")
               }
             />
             <CheckRow

@@ -146,7 +146,14 @@ export async function cancelPublish(postId: string): Promise<number> {
   const jobs = await prisma.publishJob.findMany({
     where: {
       postPlatform: { postId },
-      status: { in: [JobStatus.PENDING, JobStatus.QUEUED, JobStatus.FAILED] },
+      status: {
+        in: [
+          JobStatus.PENDING,
+          JobStatus.QUEUED,
+          JobStatus.FAILED,
+          JobStatus.BLOCKED,
+        ],
+      },
     },
   });
 
@@ -191,6 +198,9 @@ export async function retryPublishJob(
   if (job.postPlatform.status === PostPlatformStatus.PUBLISHED) {
     throw new Error("That destination has already published; nothing to retry.");
   }
+  if (job.status === JobStatus.SUCCEEDED) {
+    throw new Error("That job already succeeded; nothing to retry.");
+  }
 
   await prisma.publishJob.update({
     where: { id: publishJobId },
@@ -233,6 +243,40 @@ export async function retryPublishJob(
     entityType: "PublishJob",
     entityId: publishJobId,
   });
+}
+
+/**
+ * Returns an account's blocked jobs to the queue.
+ *
+ * Called after a successful (re)connection: the jobs were never attempted, so
+ * there is nothing to clean up — they simply become runnable again.
+ */
+export async function unblockAccountJobs(
+  socialAccountId: string,
+): Promise<number> {
+  const blocked = await prisma.publishJob.findMany({
+    where: {
+      status: JobStatus.BLOCKED,
+      postPlatform: {
+        socialAccountId,
+        status: { not: PostPlatformStatus.PUBLISHED },
+      },
+    },
+  });
+
+  for (const job of blocked) {
+    await prisma.publishJob.update({
+      where: { id: job.id },
+      data: { status: JobStatus.QUEUED, lastError: null },
+    });
+    await prisma.postPlatform.update({
+      where: { id: job.postPlatformId },
+      data: { status: PostPlatformStatus.QUEUED, lastError: null },
+    });
+    await addToQueue(job.id, job.runAt);
+  }
+
+  return blocked.length;
 }
 
 /**

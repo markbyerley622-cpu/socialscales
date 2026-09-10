@@ -220,3 +220,114 @@ trustworthy.
 
 **Consequences.** The Accounts screen looks emptier on first run. Simulated
 publishing works regardless, which is the point.
+
+---
+
+## 2026-09-10 · The worker reports its own publishing mode; the console reads that
+
+**Context.** The live/simulation banner read the web process's own
+`ENABLE_LIVE_PUBLISHING`. But the *worker* is what publishes, and it is a
+separate process with its own environment. Running the worker live while the web
+app was configured for simulation produced a console that said "Simulation mode"
+while real publishing was enabled.
+
+**Decision.** The worker upserts a singleton `WorkerStatus` row on start and on
+every sweep. `effectivePublishingMode()` prefers a live worker's report over
+local configuration, reports which source it used, and flags disagreement.
+
+**Alternatives.** Sharing one env file (does not survive separate deployments);
+inferring from queue activity (silent when the queue is empty).
+
+**Rationale.** A safety indicator has to describe reality, not local intent. When
+no worker has checked in, the UI says so rather than presenting the web
+process's guess as fact.
+
+**Consequences.** One extra table and a 60-second heartbeat. The console now also
+tells you when the worker is not running at all, which was previously invisible.
+
+---
+
+## 2026-09-10 · Adapters classify their own failures
+
+**Decision.** Adapters raise `AdapterFailure(message, category, stage)`. The
+runner uses that category directly, and only falls back to matching an error
+string when an adapter did not classify.
+
+**Rationale.** Only the adapter knows whether "element not found" means the DOM
+drifted, the session died, or a checkpoint is showing. Retry policy is driven by
+category, so guessing it means retrying things that can never succeed — or worse,
+retrying a submission that may already have published.
+
+**Consequences.** Every adapter owes the runner a classified failure. The
+simulator does this too, precisely so it behaves like the thing it stands in for.
+
+---
+
+## 2026-09-10 · A disconnected account blocks rather than fails
+
+**Decision.** A live publish against an account that is not CONNECTED, or has no
+stored session, sets the job to `BLOCKED` and the destination back to `PENDING` —
+consuming no attempt. Reconnecting releases blocked jobs back onto the queue.
+
+**Rationale.** Nothing was attempted, so nothing failed. Burning a retry for an
+operator's disconnection would exhaust the budget of a job that is still perfectly
+valid, and would surface as a red failure the operator cannot act on beyond
+reconnecting anyway.
+
+**Consequences.** `BLOCKED` is a distinct state to reason about, and the sweeper
+deliberately leaves it alone.
+
+---
+
+## 2026-09-10 · A dedicated automation profile, plus an encrypted portable copy
+
+**Decision.** Each account gets a persistent Chromium profile under
+`storage/browser-profiles/<accountId>`, and the storageState is *also* encrypted
+into Postgres. `assertDedicatedProfile` refuses to launch against anything else.
+
+**Alternatives.** storageState alone (loses IndexedDB, service workers and device
+storage platforms bind sessions to); a persistent profile alone (not portable, and
+plaintext on disk is not a credential store).
+
+**Rationale.** The profile is what makes a session survive in practice; the
+encrypted row is what makes it portable and secure. The assertion exists because
+deriving the path correctly is not the same as guaranteeing it, and the cost of
+being wrong is automating someone's real browser profile.
+
+**Consequences.** Two places hold session state. The profile is treated as a
+cache: cold profiles are seeded from the encrypted copy, never the reverse.
+
+---
+
+## 2026-09-10 · A successful click is not proof of publication
+
+**Decision.** `PublishOutcome` carries optional `PublicationEvidence`, populated
+only by re-reading the platform's own content list. `verifiedAt` and
+`verificationMethod` are recorded on the destination, and the UI shows
+"Unconfirmed" when they are absent. A TikTok submit that cannot be confirmed
+fails as `PLATFORM_REJECTED`, which is never auto-retried.
+
+**Rationale.** The dangerous failure is a post that published while the system
+believes it did not, because the obvious response — retry — duplicates it. Making
+verification explicit turns that into a state a human decides about.
+
+**Consequences.** Publishing costs an extra page load. Instagram and YouTube have
+no verification implementation yet, so their publications record as unverified —
+visibly, rather than by silently assuming success.
+
+---
+
+## 2026-09-10 · The simulator's failure rate is configuration, not a constant
+
+**Context.** The simulator failed a fixed fraction of first attempts,
+deterministic per destination id. Ids are random per run, so this was effectively
+a coin flip — and made roughly one test run in eight fail for reasons unrelated to
+what was being tested.
+
+**Decision.** `SIMULATED_FAILURE_RATE`, defaulting to 0.125 so a demo install
+still exercises the retry path. Tests pin it to 0, and the retry-path test pins it
+to 1.
+
+**Rationale.** A failure injector nobody can turn off is not a feature, it is
+flakiness. Making it explicit also made the retry path testable on purpose rather
+than by luck.

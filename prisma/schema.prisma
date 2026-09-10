@@ -52,6 +52,8 @@ enum AccountStatus {
   DISCONNECTED
   CONNECTED
   NEEDS_REAUTH
+  /// The platform is showing a verification step only a person can clear.
+  CHALLENGE
   ERROR
 }
 
@@ -121,12 +123,53 @@ enum JobStatus {
   FAILED
   CANCELLED
   DEAD_LETTER
+  /// Cannot run as things stand — e.g. the account was disconnected. Held
+  /// rather than failed, because reconnecting makes it runnable again.
+  BLOCKED
 }
 
 enum AttemptOutcome {
   SUCCESS
   RETRYABLE_FAILURE
   PERMANENT_FAILURE
+}
+
+/// Normalised reason a publish attempt failed. Drives retry policy and is what
+/// the operator sees, so it must be decided by the adapter rather than guessed
+/// from an error string.
+enum FailureCategory {
+  AUTH_SESSION
+  SELECTOR_DRIFT
+  TRANSIENT
+  PLATFORM_REJECTED
+  MEDIA_REJECTED
+  HUMAN_ACTION_REQUIRED
+  BLOCKED_DISCONNECTED
+  UNKNOWN
+}
+
+/// How a publish was actually carried out. Recorded per attempt and per
+/// destination so a row's provenance is never inferred from configuration that
+/// may since have changed.
+enum AdapterMode {
+  OFFICIAL_API
+  BROWSER_ASSISTED
+  SIMULATED
+}
+
+/// Furthest point a publish attempt reached. Makes "where did it die" a query
+/// rather than a log-reading exercise.
+enum PublishStage {
+  QUEUED
+  PREFLIGHT
+  SESSION_RESTORED
+  AUTHENTICATED
+  COMPOSER_OPENED
+  MEDIA_UPLOADED
+  METADATA_ENTERED
+  SUBMITTED
+  CONFIRMED
+  VERIFIED
 }
 
 /// Where a metric came from. Browser-assisted numbers are less trustworthy than
@@ -330,6 +373,9 @@ model PlatformSession {
   id              String                @id @default(cuid())
   socialAccountId String                @unique
   status          PlatformSessionStatus @default(ACTIVE)
+  /// Storage key of the dedicated browser profile this session belongs to.
+  /// Never the operator's personal Chrome profile.
+  profileKey      String?
   cipherText      String
   iv              String
   authTag         String
@@ -468,6 +514,14 @@ model PostPlatform {
   permalink       String?
   publishedAt     DateTime?
   lastError       String?
+  /// How this destination was published. Null until an attempt succeeds.
+  adapterMode     AdapterMode?
+  /// The platform's own id for the account at the moment of publishing.
+  platformAccountId String?
+  /// Set only when publication was confirmed by platform-visible evidence, not
+  /// merely by a successful button click.
+  verifiedAt      DateTime?
+  verificationMethod String?
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
@@ -541,6 +595,11 @@ model PublishAttempt {
   jobId         String
   attemptNo     Int
   outcome       AttemptOutcome?
+  /// Normalised failure reason. Null on success.
+  failureCategory FailureCategory?
+  /// Furthest stage reached before finishing or failing.
+  stageReached  PublishStage    @default(QUEUED)
+  adapterMode   AdapterMode?
   startedAt     DateTime        @default(now())
   finishedAt    DateTime?
   errorMessage  String?
@@ -664,6 +723,27 @@ model Recommendation {
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, status, confidence])
+}
+
+/**
+ * What the publishing worker reports about itself.
+ *
+ * The worker is a separate process, so the web app cannot know from its own
+ * configuration whether publishing is actually live — and a UI that says
+ * "simulation" while the worker publishes for real is worse than no UI at all.
+ * The worker writes here on start and on every sweep; the console reads this
+ * rather than its own environment.
+ *
+ * Singleton: one row, id "worker".
+ */
+model WorkerStatus {
+  id             String   @id
+  livePublishing Boolean
+  aiProvider     String
+  queuePrefix    String
+  startedAt      DateTime
+  lastSeenAt     DateTime
+  hostname       String?
 }
 
 // ---------------------------------------------------------------------------

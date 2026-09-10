@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
-import type { PublishOutcome, StepLogger } from "@/server/platforms/types";
+import {
+  AdapterFailure,
+  type PublishOutcome,
+  type StepLogger,
+} from "@/server/platforms/types";
+import { FailureCategory } from "@/generated/prisma/enums";
 import type { Platform } from "@/generated/prisma/enums";
+import { env } from "@/env";
 
 /**
  * Offline publish simulator.
@@ -36,8 +42,9 @@ export type SimulationInput = {
 };
 
 /**
- * Deterministic 0..1 value derived from the id. ~1 in 8 first attempts fail so
- * the retry path and the failure UI are genuinely reachable in demo data.
+ * Deterministic 0..1 value derived from the id. Combined with
+ * SIMULATED_FAILURE_RATE this decides whether a first attempt fails, so the
+ * retry path and the failure UI are reachable in a demo install.
  */
 function jitter(seed: string): number {
   const digest = createHash("sha256").update(seed).digest();
@@ -58,10 +65,15 @@ export async function simulatePublish(
   }
 
   const roll = jitter(`${input.postPlatformId}:${input.attemptNo}`);
-  if (input.attemptNo === 1 && roll < 0.125) {
+  if (input.attemptNo === 1 && roll < env.simulatedFailureRate) {
     await input.log("Simulated transient failure: composer did not confirm in time");
-    throw new Error(
+    // Classified like a real adapter would classify it. The simulator stands in
+    // for an adapter, so it owes the runner the same typed failure rather than a
+    // bare Error the runner has to guess about.
+    throw new AdapterFailure(
       "Simulated transient publish failure (composer confirmation timed out). This is the retry path, not a real platform error.",
+      FailureCategory.TRANSIENT,
+      "SUBMITTED",
     );
   }
 
@@ -78,7 +90,11 @@ export async function simulatePublish(
       status: "scheduled",
       remotePostId,
       permalink: null,
+      platformAccountId: null,
       scheduledFor: input.publishAt,
+      // The simulator never produces platform evidence, because there is no
+      // platform. The runner records adapterMode SIMULATED alongside this.
+      verification: null,
     };
   }
 
@@ -87,6 +103,8 @@ export async function simulatePublish(
     status: "published",
     remotePostId,
     permalink: `https://example.invalid/simulated/${remotePostId}`,
+    platformAccountId: null,
+    verification: null,
   };
 }
 

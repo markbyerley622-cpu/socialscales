@@ -1,5 +1,9 @@
 import type { Page } from "playwright";
-import type { Platform } from "@/generated/prisma/enums";
+import type {
+  FailureCategory,
+  Platform,
+  PublishStage,
+} from "@/generated/prisma/enums";
 
 /**
  * The platform boundary.
@@ -55,6 +59,34 @@ export type ValidationVerdict = {
   issues: ValidationIssue[];
 };
 
+/**
+ * A failure an adapter understands well enough to classify.
+ *
+ * Classification belongs to the adapter, not to a regex over an error string in
+ * the runner: only the adapter knows whether "element not found" means the DOM
+ * drifted, the session expired, or the platform is showing a checkpoint. The
+ * runner uses the category to decide retry policy, so guessing it would mean
+ * retrying things that can never succeed.
+ */
+export class AdapterFailure extends Error {
+  constructor(
+    message: string,
+    readonly category: FailureCategory,
+    readonly stage: PublishStage,
+    /** Non-sensitive context for the operator. Never credentials or cookies. */
+    readonly detail: Record<string, unknown> = {},
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "AdapterFailure";
+  }
+}
+
+/** True when retrying the same job could plausibly succeed. */
+export function isRetryableCategory(category: FailureCategory): boolean {
+  return category === "TRANSIENT" || category === "UNKNOWN";
+}
+
 /** One line in the publish log shown in the UI. */
 export type StepLogger = (
   message: string,
@@ -73,23 +105,59 @@ export type BrowserPublishContext = {
   log: StepLogger;
 };
 
+/**
+ * Proof that a publication exists on the platform.
+ *
+ * A successful button click is not proof. This is only populated when the
+ * adapter has re-read the platform's own state and found the post there.
+ */
+export type PublicationEvidence = {
+  method: string;
+  remotePostId: string | null;
+  permalink: string | null;
+  publishedAt: Date | null;
+  observed: string;
+};
+
 export type PublishOutcome =
   | {
       status: "published";
       remotePostId: string | null;
       permalink: string | null;
+      platformAccountId: string | null;
+      /** Null when the adapter submitted successfully but could not confirm. */
+      verification: PublicationEvidence | null;
     }
   | {
       status: "scheduled";
       remotePostId: string | null;
       permalink: string | null;
+      platformAccountId: string | null;
       scheduledFor: Date;
+      verification: PublicationEvidence | null;
     };
 
+/**
+ * What a session probe found.
+ *
+ * `AUTHENTICATED` is the only state that permits publishing, and an adapter may
+ * only return it when it has seen positive evidence of a usable signed-in
+ * session — never merely because a session blob exists on disk.
+ */
+export type SignInState =
+  | "AUTHENTICATED"
+  | "UNAUTHENTICATED"
+  | "CHALLENGE"
+  | "UNKNOWN";
+
 export type SignInProbe = {
-  signedIn: boolean;
+  state: SignInState;
   handle: string | null;
   displayName: string | null;
+  /** The platform's own account id, when it can be read cheaply. */
+  platformAccountId: string | null;
+  /** What the adapter actually observed, for the diagnostics view. */
+  evidence: string;
 };
 
 export type MetricsSample = {
@@ -136,6 +204,18 @@ export type SocialPlatform = {
    * BROWSER_ASSISTED for `publish` and live publishing is enabled.
    */
   publishViaBrowser(context: BrowserPublishContext): Promise<PublishOutcome>;
+
+  /**
+   * Re-reads the platform to confirm a publication exists. Called after a
+   * submit that reported success, and again by reconciliation for a destination
+   * that has a remote id but no verification.
+   */
+  verifyPublication?(input: {
+    page: Page;
+    remotePostId: string | null;
+    caption: string;
+    log: StepLogger;
+  }): Promise<PublicationEvidence | null>;
 
   /** Present only when the platform declares a metrics capability. */
   collectMetrics?(input: {

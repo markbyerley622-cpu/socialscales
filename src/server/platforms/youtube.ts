@@ -88,7 +88,13 @@ export const youtubeAdapter: SocialPlatform = {
   async probeSignIn(page): Promise<SignInProbe> {
     await page.goto(this.sessionProbeUrl, { waitUntil: "domcontentloaded" });
     if (page.url().includes("accounts.google.com")) {
-      return { signedIn: false, handle: null, displayName: null };
+      return {
+        state: "UNAUTHENTICATED",
+        handle: null,
+        displayName: null,
+        platformAccountId: null,
+        evidence: "Redirected to the Google sign-in page",
+      };
     }
     let displayName: string | null = null;
     try {
@@ -99,7 +105,13 @@ export const youtubeAdapter: SocialPlatform = {
     } catch {
       // Leave null; the operator-entered handle stands.
     }
-    return { signedIn: true, handle: null, displayName };
+    return {
+      state: "AUTHENTICATED",
+      handle: null,
+      displayName,
+      platformAccountId: null,
+      evidence: `YouTube Studio rendered without redirecting to sign-in${displayName ? ` as ${displayName}` : ""}`,
+    };
   },
 
   async publishViaBrowser(ctx): Promise<PublishOutcome> {
@@ -183,9 +195,17 @@ export const youtubeAdapter: SocialPlatform = {
           status: "scheduled",
           remotePostId: null,
           permalink: null,
+          platformAccountId: null,
           scheduledFor: ctx.publishAt,
+          verification: null,
         }
-      : { status: "published", remotePostId: null, permalink: null };
+      : {
+          status: "published",
+          remotePostId: null,
+          permalink: null,
+          platformAccountId: null,
+          verification: null,
+        };
   },
 };
 

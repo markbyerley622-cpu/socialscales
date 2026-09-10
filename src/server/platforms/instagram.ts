@@ -79,7 +79,13 @@ export const instagramAdapter: SocialPlatform = {
   async probeSignIn(page): Promise<SignInProbe> {
     await page.goto(this.sessionProbeUrl, { waitUntil: "domcontentloaded" });
     if (page.url().includes("/accounts/login")) {
-      return { signedIn: false, handle: null, displayName: null };
+      return {
+        state: "UNAUTHENTICATED",
+        handle: null,
+        displayName: null,
+        platformAccountId: null,
+        evidence: "Redirected to the Instagram login page",
+      };
     }
     let handle: string | null = null;
     try {
@@ -93,7 +99,13 @@ export const instagramAdapter: SocialPlatform = {
     } catch {
       // Handle stays null; the account row keeps whatever the operator entered.
     }
-    return { signedIn: true, handle, displayName: null };
+    return {
+      state: "AUTHENTICATED",
+      handle,
+      displayName: null,
+      platformAccountId: handle,
+      evidence: `Instagram home rendered without redirecting to login${handle ? ` as ${handle}` : ""}`,
+    };
   },
 
   async publishViaBrowser(ctx): Promise<PublishOutcome> {
@@ -185,6 +197,14 @@ export const instagramAdapter: SocialPlatform = {
       .waitFor({ timeout: 180_000 });
 
     await log("Instagram confirmed the post was shared");
-    return { status: "published", remotePostId: null, permalink: null };
+    // No verifyPublication implementation yet, so this returns no evidence and
+    // the runner records the destination as published-but-unverified.
+    return {
+      status: "published",
+      remotePostId: null,
+      permalink: null,
+      platformAccountId: null,
+      verification: null,
+    };
   },
 };

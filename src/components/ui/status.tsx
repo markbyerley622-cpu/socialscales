@@ -23,8 +23,11 @@ import type { ReactNode } from "react";
 import { Badge, type BadgeTone } from "./primitives";
 import type {
   AccountStatus,
+  AdapterMode,
   ApprovalState,
   Confidence,
+  FailureCategory,
+  PublishStage,
   JobStatus,
   MetricSource,
   Platform,
@@ -89,6 +92,7 @@ const JOB_STATUS: Record<JobStatus, Descriptor> = {
   FAILED: { tone: "serious", icon: <AlertTriangle />, label: "Failed" },
   CANCELLED: { tone: "neutral", icon: <CircleSlash />, label: "Cancelled" },
   DEAD_LETTER: { tone: "critical", icon: <XCircle />, label: "Gave up" },
+  BLOCKED: { tone: "warning", icon: <ShieldX />, label: "Blocked" },
 };
 
 export function JobStatusBadge({ status }: { status: JobStatus }) {
@@ -104,6 +108,7 @@ const ACCOUNT_STATUS: Record<AccountStatus, Descriptor> = {
   CONNECTED: { tone: "good", icon: <ShieldCheck />, label: "Connected" },
   DISCONNECTED: { tone: "neutral", icon: <CircleDashed />, label: "Not connected" },
   NEEDS_REAUTH: { tone: "warning", icon: <AlertTriangle />, label: "Needs reconnect" },
+  CHALLENGE: { tone: "serious", icon: <AlertTriangle />, label: "Needs you" },
   ERROR: { tone: "critical", icon: <ShieldX />, label: "Error" },
 };
 
@@ -192,6 +197,144 @@ export function MetricSourceBadge({ source }: { source: MetricSource }) {
       }
     >
       {descriptor.label}
+    </Badge>
+  );
+}
+
+/**
+ * Normalised failure reasons. These are what an operator acts on, so each one
+ * says what to do rather than merely what went wrong.
+ */
+const FAILURE: Record<FailureCategory, Descriptor & { hint: string }> = {
+  AUTH_SESSION: {
+    tone: "warning",
+    icon: <ShieldX />,
+    label: "Session",
+    hint: "The stored session is no longer usable. Reconnect the account.",
+  },
+  SELECTOR_DRIFT: {
+    tone: "serious",
+    icon: <AlertTriangle />,
+    label: "UI changed",
+    hint: "The platform's page layout moved. The step log lists every selector that was tried.",
+  },
+  TRANSIENT: {
+    tone: "info",
+    icon: <Clock />,
+    label: "Transient",
+    hint: "A timeout or network error. Retrying is reasonable.",
+  },
+  PLATFORM_REJECTED: {
+    tone: "critical",
+    icon: <XCircle />,
+    label: "Rejected",
+    hint: "The platform did not accept the publication. Check the account before retrying.",
+  },
+  MEDIA_REJECTED: {
+    tone: "critical",
+    icon: <XCircle />,
+    label: "Media",
+    hint: "The file breaks this platform's constraints. Retrying will not help.",
+  },
+  HUMAN_ACTION_REQUIRED: {
+    tone: "serious",
+    icon: <AlertTriangle />,
+    label: "Needs you",
+    hint: "The platform is showing a verification step. Clear it by hand in the automation profile, then retry.",
+  },
+  BLOCKED_DISCONNECTED: {
+    tone: "warning",
+    icon: <CircleSlash />,
+    label: "Blocked",
+    hint: "The account is not connected, so nothing was attempted. Reconnect and retry.",
+  },
+  UNKNOWN: {
+    tone: "neutral",
+    icon: <HelpCircle />,
+    label: "Unknown",
+    hint: "Not classified. The step log and screenshot are the place to start.",
+  },
+};
+
+export function FailureCategoryBadge({ category }: { category: FailureCategory }) {
+  const descriptor = FAILURE[category];
+  return (
+    <Badge tone={descriptor.tone} icon={descriptor.icon} title={descriptor.hint}>
+      {descriptor.label}
+    </Badge>
+  );
+}
+
+export function failureHint(category: FailureCategory): string {
+  return FAILURE[category].hint;
+}
+
+const STAGE_LABELS: Record<PublishStage, string> = {
+  QUEUED: "Queued",
+  PREFLIGHT: "Pre-flight",
+  SESSION_RESTORED: "Session restored",
+  AUTHENTICATED: "Authenticated",
+  COMPOSER_OPENED: "Composer opened",
+  MEDIA_UPLOADED: "Media uploaded",
+  METADATA_ENTERED: "Metadata entered",
+  SUBMITTED: "Submitted",
+  CONFIRMED: "Confirmed",
+  VERIFIED: "Verified on platform",
+};
+
+export function stageLabel(stage: PublishStage): string {
+  return STAGE_LABELS[stage] ?? stage;
+}
+
+const ADAPTER_MODE: Record<AdapterMode, Descriptor> = {
+  OFFICIAL_API: { tone: "good", icon: <ShieldCheck />, label: "Official API" },
+  BROWSER_ASSISTED: { tone: "info", icon: <CircleDot />, label: "Browser-assisted" },
+  SIMULATED: { tone: "serious", icon: <AlertTriangle />, label: "Simulated" },
+};
+
+export function AdapterModeBadge({ mode }: { mode: AdapterMode }) {
+  const descriptor = ADAPTER_MODE[mode];
+  return (
+    <Badge
+      tone={descriptor.tone}
+      icon={descriptor.icon}
+      title={
+        mode === "SIMULATED"
+          ? "Produced by the publish simulator, not by a real platform."
+          : undefined
+      }
+    >
+      {descriptor.label}
+    </Badge>
+  );
+}
+
+/** Publication confirmed by platform-visible evidence, not just a click. */
+export function VerifiedBadge({
+  verifiedAt,
+  method,
+}: {
+  verifiedAt: Date | null;
+  method: string | null;
+}) {
+  if (!verifiedAt) {
+    return (
+      <Badge
+        tone="warning"
+        icon={<HelpCircle />}
+        title="The submission reported success but the post was not re-read from the platform."
+      >
+        Unconfirmed
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      tone="good"
+      icon={<ShieldCheck />}
+      title={`Confirmed by re-reading the platform (${method ?? "unknown method"})`}
+    >
+      Verified
     </Badge>
   );
 }

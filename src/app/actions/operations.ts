@@ -67,7 +67,12 @@ export async function runJobNowAction(formData: FormData): Promise<ActionResult>
 
     switch (result.outcome) {
       case "published":
-        return { ok: true, message: "Published." };
+        return {
+          ok: true,
+          message: result.verified
+            ? `Published and confirmed on the platform${result.permalink ? ` — ${result.permalink}` : ""}.`
+            : "Published, but the platform could not be re-read to confirm it. Check the account before retrying.",
+        };
       case "scheduled":
         return {
           ok: true,
@@ -75,10 +80,16 @@ export async function runJobNowAction(formData: FormData): Promise<ActionResult>
         };
       case "skipped":
         return { ok: true, message: `Skipped: ${result.reason}` };
+      case "blocked":
+        return { ok: false, message: `Blocked: ${result.reason}` };
       case "failed":
         return {
           ok: false,
-          message: `${result.error}${result.retryable ? " It will be retried." : " This will not be retried automatically."}`,
+          message:
+            `[${result.category} at ${result.stage}] ${result.error}` +
+            (result.retryable
+              ? " It will be retried."
+              : " This will not be retried automatically."),
         };
     }
   } catch (error) {

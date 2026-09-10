@@ -19,7 +19,15 @@ import {
 } from "@/components/ui/primitives";
 import { ActionForm } from "@/components/ui/action-form";
 import { SubmitButton } from "@/components/ui/button";
-import { JobStatusBadge, PlatformBadge } from "@/components/ui/status";
+import {
+  AdapterModeBadge,
+  FailureCategoryBadge,
+  JobStatusBadge,
+  PlatformBadge,
+  VerifiedBadge,
+  failureHint,
+  stageLabel,
+} from "@/components/ui/status";
 import { StatTile } from "@/components/charts/stat-tile";
 import { dateTimeLabel, relativeTime } from "@/lib/utils";
 import { JobStatus } from "@/generated/prisma/enums";
@@ -40,6 +48,7 @@ export default async function QueuePage() {
       take: 60,
       include: {
         attemptLog: { orderBy: { attemptNo: "desc" }, take: 1 },
+        _count: { select: { attemptLog: true } },
         postPlatform: {
           include: {
             account: { select: { handle: true } },
@@ -95,6 +104,12 @@ export default async function QueuePage() {
             label="Gave up"
             value={String(byStatus(JobStatus.DEAD_LETTER))}
             tone={byStatus(JobStatus.DEAD_LETTER) > 0 ? "critical" : "neutral"}
+          />
+          <StatTile
+            label="Blocked"
+            value={String(byStatus(JobStatus.BLOCKED))}
+            tone={byStatus(JobStatus.BLOCKED) > 0 ? "warning" : "neutral"}
+            hint="account not connected"
           />
         </div>
 
@@ -160,7 +175,9 @@ export default async function QueuePage() {
                 const steps = parseSteps(attempt?.steps);
                 const target = job.postPlatform;
                 const failed =
-                  job.status === JobStatus.FAILED || job.status === JobStatus.DEAD_LETTER;
+                  job.status === JobStatus.FAILED ||
+                  job.status === JobStatus.DEAD_LETTER ||
+                  job.status === JobStatus.BLOCKED;
 
                 return (
                   <li key={job.id} className="px-4 py-3">
@@ -182,8 +199,51 @@ export default async function QueuePage() {
                         </Link>
                         <p className="mt-0.5 text-[10.5px] tabular text-ink-muted">
                           Due {dateTimeLabel(job.runAt)} ({relativeTime(job.runAt)}) ·
-                          attempt {job.attempts}/{job.maxAttempts}
+                          attempt {job.attempts}/{job.maxAttempts} ·{" "}
+                          {job._count.attemptLog} attempt
+                          {job._count.attemptLog === 1 ? "" : "s"} logged
                         </p>
+
+                        {/* Everything needed to trace one attempt end to end. */}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          {attempt?.adapterMode ? (
+                            <AdapterModeBadge mode={attempt.adapterMode} />
+                          ) : null}
+                          {attempt ? (
+                            <span className="text-[10px] text-ink-muted">
+                              reached {stageLabel(attempt.stageReached)}
+                            </span>
+                          ) : null}
+                          {attempt?.failureCategory ? (
+                            <FailureCategoryBadge category={attempt.failureCategory} />
+                          ) : null}
+                          {target.status === "PUBLISHED" ? (
+                            <VerifiedBadge
+                              verifiedAt={target.verifiedAt}
+                              method={target.verificationMethod}
+                            />
+                          ) : null}
+                        </div>
+
+                        {target.permalink ? (
+                          <a
+                            href={target.permalink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 inline-block break-all text-[10.5px] text-accent-ink hover:underline"
+                          >
+                            {target.permalink}
+                          </a>
+                        ) : null}
+                        {target.remotePostId ? (
+                          <p className="mt-0.5 text-[10px] tabular text-ink-muted">
+                            platform post id{" "}
+                            <code className="text-ink-secondary">{target.remotePostId}</code>
+                            {target.platformAccountId
+                              ? ` · account ${target.platformAccountId}`
+                              : ""}
+                          </p>
+                        ) : null}
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1.5">
@@ -216,9 +276,16 @@ export default async function QueuePage() {
                     </div>
 
                     {job.lastError ? (
-                      <p className="mt-2 rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5 text-[11px] leading-relaxed text-[#ec7d7d]">
-                        {job.lastError}
-                      </p>
+                      <div className="mt-2 rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5">
+                        <p className="text-[11px] leading-relaxed text-[#ec7d7d]">
+                          {job.lastError}
+                        </p>
+                        {attempt?.failureCategory ? (
+                          <p className="mt-1 text-[10.5px] leading-relaxed text-ink-muted">
+                            {failureHint(attempt.failureCategory)}
+                          </p>
+                        ) : null}
+                      </div>
                     ) : null}
 
                     {steps.length > 0 ? (

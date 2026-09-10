@@ -5,8 +5,10 @@ import { simulateMetrics } from "@/server/automation/simulator";
 import { withAccountSession } from "@/server/automation/browser";
 import { activityActions, recordActivitySafe } from "@/server/activity/log";
 import {
+  AccountStatus,
   ActorType,
   MetricSource,
+  PlatformSessionStatus,
   PostPlatformStatus,
 } from "@/generated/prisma/enums";
 
@@ -127,6 +129,17 @@ export async function syncAnalytics(input: {
  * supplies deterministic numbers and every snapshot is stamped SIMULATED so the
  * UI can never present them as real platform data.
  */
+async function isLiveCollectable(socialAccountId: string): Promise<boolean> {
+  const account = await prisma.socialAccount.findUnique({
+    where: { id: socialAccountId },
+    select: { status: true, session: { select: { status: true } } },
+  });
+  return (
+    account?.status === AccountStatus.CONNECTED &&
+    account.session?.status === PlatformSessionStatus.ACTIVE
+  );
+}
+
 async function collectMetrics(input: {
   postPlatformId: string;
   socialAccountId: string;
@@ -153,11 +166,15 @@ async function collectMetrics(input: {
 }> {
   const adapter = getAdapter(input.platform);
 
+  // A live read needs all of: live mode, a platform that supports it, an
+  // implementation, a remote id to look up, and a genuinely connected account.
+  // Anything less falls back to the simulator rather than throwing.
   const canCollectLive =
     env.enableLivePublishing &&
     adapter.capabilities.metrics !== "UNSUPPORTED" &&
     typeof adapter.collectMetrics === "function" &&
-    input.remotePostId !== null;
+    input.remotePostId !== null &&
+    (await isLiveCollectable(input.socialAccountId));
 
   if (!canCollectLive) {
     return {
@@ -180,7 +197,7 @@ async function collectMetrics(input: {
         remotePostId: input.remotePostId!,
         log: async () => {},
       }),
-    { headless: true },
+    { headless: true, originUrl: adapter.sessionProbeUrl },
   );
 
   return {

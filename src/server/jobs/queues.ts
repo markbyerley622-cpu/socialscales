@@ -20,6 +20,9 @@ export const QUEUE_NAMES = {
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
+/** Shared by every Queue and Worker so both sides agree on the namespace. */
+export const QUEUE_PREFIX = env.queuePrefix;
+
 export const connection: ConnectionOptions = {
   url: env.redisUrl,
   // BullMQ requires this for blocking commands.
@@ -56,6 +59,7 @@ function getQueue<T>(name: QueueName): Queue<T> {
   if (existing) return existing as Queue<T>;
   const queue = new Queue<T>(name, {
     connection,
+    prefix: env.queuePrefix,
     defaultJobOptions: DEFAULT_JOB_OPTIONS,
   });
   registry.set(name, queue);

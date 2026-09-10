@@ -2,43 +2,68 @@ import { env } from "@/env";
 import { prisma } from "@/server/db";
 import { absolutePath, storageKeys, writeBuffer } from "@/server/storage";
 import { getAdapter } from "@/server/platforms/registry";
-import type { PublishOutcome, StepLogger } from "@/server/platforms/types";
+import {
+  AdapterFailure,
+  isRetryableCategory,
+  type PublicationEvidence,
+  type PublishOutcome,
+  type StepLogger,
+} from "@/server/platforms/types";
 import { simulatePublish } from "./simulator";
-import { MissingSessionError, markSessionExpired, withAccountSession } from "./browser";
+import { hasStoredSession, markSessionExpired, withAccountSession } from "./browser";
 import { recordActivitySafe, activityActions } from "@/server/activity/log";
 import {
   AccountStatus,
   ActorType,
+  AdapterMode,
   AttemptOutcome,
+  FailureCategory,
   JobStatus,
   PostPlatformStatus,
   PostStatus,
+  PublishStage,
 } from "@/generated/prisma/enums";
 
 /**
  * Executes one PublishJob.
  *
- * Guarantees:
- *  - A job whose PostPlatform is already PUBLISHED is a no-op. Retrying is safe.
- *  - Only one runner can hold a job: the transition to RUNNING is a conditional
- *    update, so a second worker picking up the same id does nothing.
- *  - Every step is timestamped into PublishAttempt.steps and shown in the UI.
- *  - Failures are classified. Permanent failures do not burn retries.
+ * Invariants:
+ *  - A destination already PUBLISHED is never published again. Retrying is safe.
+ *  - Only one runner holds a job: the transition to RUNNING is a conditional
+ *    update, so a second worker on the same id does nothing.
+ *  - Live publishing requires a *verified* connected account. A stored session
+ *    file is not sufficient, and a disconnected account blocks rather than fails.
+ *  - Success is only recorded with the mode that produced it, so a row's
+ *    provenance never has to be inferred from current configuration.
  */
 
 export type RunResult =
   | { outcome: "skipped"; reason: string }
-  | { outcome: "published"; remotePostId: string | null; permalink: string | null }
+  | {
+      outcome: "published";
+      remotePostId: string | null;
+      permalink: string | null;
+      verified: boolean;
+    }
   | { outcome: "scheduled"; scheduledFor: Date }
-  | { outcome: "failed"; retryable: boolean; error: string };
+  | { outcome: "blocked"; reason: string }
+  | {
+      outcome: "failed";
+      retryable: boolean;
+      error: string;
+      category: FailureCategory;
+      stage: PublishStage;
+    };
 
 type StepEntry = { at: string; message: string; detail?: Record<string, unknown> };
 
-/** Carries the storage key of the screenshot taken at the point of failure. */
+/** Carries the screenshot taken at the exact point of failure. */
 export class PublishFailure extends Error {
   constructor(
     message: string,
     readonly screenshotKey: string | null,
+    readonly category: FailureCategory,
+    readonly stage: PublishStage,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -46,14 +71,61 @@ export class PublishFailure extends Error {
   }
 }
 
-/** Errors that will never succeed on retry, so the job is failed immediately. */
-function isPermanent(error: unknown): boolean {
-  if (error instanceof MissingSessionError) return true;
+/**
+ * Classifies an error the adapter did not classify itself.
+ *
+ * Adapters raise `AdapterFailure` with a category, and that is always preferred.
+ * This is the fallback for everything else — Playwright timeouts, network
+ * errors, bugs — and it deliberately defaults to UNKNOWN rather than guessing
+ * something more specific.
+ */
+export function classifyError(error: unknown): {
+  category: FailureCategory;
+  stage: PublishStage | null;
+} {
+  if (error instanceof AdapterFailure) {
+    return { category: error.category, stage: error.stage };
+  }
+  if (error instanceof PublishFailure) {
+    return { category: error.category, stage: error.stage };
+  }
   const message = error instanceof Error ? error.message : String(error);
-  return (
-    /no longer valid|Reconnect the account|not supported|layout has changed|publish this one by hand/i.test(
-      message,
-    ) || /media (?:validation|rejected)/i.test(message)
+
+  if (/media rejected|not accept this media/i.test(message)) {
+    return { category: FailureCategory.MEDIA_REJECTED, stage: null };
+  }
+  if (/no stored browser session|reconnect the account|no longer valid/i.test(message)) {
+    return { category: FailureCategory.AUTH_SESSION, stage: null };
+  }
+  if (/timed?\s?out|timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|net::ERR/i.test(message)) {
+    return { category: FailureCategory.TRANSIENT, stage: null };
+  }
+  return { category: FailureCategory.UNKNOWN, stage: null };
+}
+
+/**
+ * Structured line for the worker log.
+ *
+ * Everything needed to trace one attempt end to end, and nothing that could leak
+ * a credential: no cookies, no tokens, no storage state, and adapters strip query
+ * strings from any URL they report.
+ */
+function observe(record: {
+  jobId: string;
+  postPlatformId: string;
+  postId: string;
+  attemptNo: number;
+  account: string;
+  platform: string;
+  adapterMode: AdapterMode;
+  stage: PublishStage;
+  event: string;
+  result?: string;
+  category?: FailureCategory;
+  detail?: Record<string, unknown>;
+}): void {
+  console.log(
+    JSON.stringify({ at: new Date().toISOString(), scope: "publish", ...record }),
   );
 }
 
@@ -64,13 +136,7 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
       postPlatform: {
         include: {
           account: true,
-          post: {
-            include: {
-              project: true,
-              asset: true,
-              variant: true,
-            },
-          },
+          post: { include: { project: true, asset: true, variant: true } },
         },
       },
     },
@@ -79,6 +145,7 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
   if (!job) return { outcome: "skipped", reason: `Job ${jobId} no longer exists.` };
 
   const target = job.postPlatform;
+  const adapter = getAdapter(target.platform);
 
   // --- Idempotency gate -----------------------------------------------------
   if (target.status === PostPlatformStatus.PUBLISHED) {
@@ -94,11 +161,39 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
     return { outcome: "skipped", reason: "Job was cancelled." };
   }
 
+  const live = env.enableLivePublishing;
+  const adapterMode = live ? AdapterMode.BROWSER_ASSISTED : AdapterMode.SIMULATED;
+
+  // --- Pre-flight gates that block rather than fail -------------------------
+  if (live) {
+    const blocked = await preflightBlock(target.socialAccountId, adapter);
+    if (blocked) {
+      await blockJob(job.id, target.id, blocked);
+      observe({
+        jobId,
+        postPlatformId: target.id,
+        postId: target.postId,
+        attemptNo: job.attempts,
+        account: target.account.handle,
+        platform: target.platform,
+        adapterMode,
+        stage: PublishStage.PREFLIGHT,
+        event: "blocked",
+        result: "blocked",
+        category: FailureCategory.BLOCKED_DISCONNECTED,
+        detail: { reason: blocked },
+      });
+      return { outcome: "blocked", reason: blocked };
+    }
+  }
+
   // --- Claim the job --------------------------------------------------------
   const claimed = await prisma.publishJob.updateMany({
     where: {
       id: jobId,
-      status: { in: [JobStatus.PENDING, JobStatus.QUEUED, JobStatus.FAILED] },
+      status: {
+        in: [JobStatus.PENDING, JobStatus.QUEUED, JobStatus.FAILED, JobStatus.BLOCKED],
+      },
     },
     data: { status: JobStatus.RUNNING, startedAt: new Date() },
   });
@@ -110,8 +205,10 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
   }
 
   const attemptNo = job.attempts + 1;
+  let stage: PublishStage = PublishStage.QUEUED;
+
   const attempt = await prisma.publishAttempt.create({
-    data: { jobId, attemptNo, steps: [] },
+    data: { jobId, attemptNo, steps: [], adapterMode, stageReached: stage },
   });
 
   const steps: StepEntry[] = [];
@@ -121,6 +218,29 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
       where: { id: attempt.id },
       data: { steps: steps as unknown as object[] },
     });
+  };
+
+  const trace = (event: string, extra: Partial<Parameters<typeof observe>[0]> = {}) =>
+    observe({
+      jobId,
+      postPlatformId: target.id,
+      postId: target.postId,
+      attemptNo,
+      account: target.account.handle,
+      platform: target.platform,
+      adapterMode,
+      stage,
+      event,
+      ...extra,
+    });
+
+  const advance = async (next: PublishStage) => {
+    stage = next;
+    await prisma.publishAttempt.update({
+      where: { id: attempt.id },
+      data: { stageReached: next },
+    });
+    trace("stage");
   };
 
   await prisma.$transaction([
@@ -135,6 +255,7 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
     }),
   ]);
 
+  trace("started");
   await recordActivitySafe({
     action: activityActions.publishStarted,
     message: `Publishing "${target.post.variant.hook}" to ${target.platform}`,
@@ -142,13 +263,13 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
     actorType: ActorType.WORKER,
     entityType: "PublishJob",
     entityId: jobId,
-    metadata: { attemptNo },
+    metadata: { attemptNo, adapterMode },
   });
 
-  const adapter = getAdapter(target.platform);
-
   try {
-    // --- Pre-flight validation ---------------------------------------------
+    await advance(PublishStage.PREFLIGHT);
+
+    // --- Media validation --------------------------------------------------
     const verdict = adapter.validateMedia({
       mimeType: target.post.asset.mimeType,
       sizeBytes: target.post.asset.sizeBytes,
@@ -156,11 +277,15 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
       aspectRatio: target.post.asset.aspectRatio,
     });
     if (!verdict.ok) {
-      const errors = verdict.issues
-        .filter((issue) => issue.severity === "error")
-        .map((issue) => issue.message)
-        .join(" ");
-      throw new Error(`Media rejected for ${adapter.label}: ${errors}`);
+      throw new AdapterFailure(
+        `Media rejected for ${adapter.label}: ` +
+          verdict.issues
+            .filter((issue) => issue.severity === "error")
+            .map((issue) => issue.message)
+            .join(" "),
+        FailureCategory.MEDIA_REJECTED,
+        PublishStage.PREFLIGHT,
+      );
     }
     for (const warning of verdict.issues.filter((i) => i.severity === "warning")) {
       await log(`Warning: ${warning.message}`);
@@ -182,7 +307,7 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
 
     let result: PublishOutcome;
 
-    if (!env.enableLivePublishing) {
+    if (!live) {
       result = await simulatePublish({
         platform: target.platform,
         postPlatformId: target.id,
@@ -191,30 +316,38 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
         log,
         attemptNo,
       });
+      await advance(PublishStage.CONFIRMED);
     } else {
-      await log("Live publishing enabled; launching browser");
+      await log("Live publishing enabled; opening the dedicated automation profile");
       result = await withAccountSession(
         target.socialAccountId,
         async (page) => {
-          await log("Restored stored session");
+          await advance(PublishStage.SESSION_RESTORED);
+          await log("Session restored into the automation profile");
+
           const probe = await adapter.probeSignIn(page);
-          if (!probe.signedIn) {
-            await markSessionExpired(target.socialAccountId);
-            await prisma.socialAccount.update({
-              where: { id: target.socialAccountId },
-              data: {
-                status: AccountStatus.NEEDS_REAUTH,
-                lastError: "Stored session is no longer signed in.",
-              },
-            });
-            throw new Error(
-              `${adapter.label} session is no longer valid. Reconnect the account.`,
+          if (probe.state !== "AUTHENTICATED") {
+            await handleUnusableSession(target.socialAccountId, probe.state, probe.evidence);
+            throw new AdapterFailure(
+              probe.state === "CHALLENGE"
+                ? `${adapter.label} is showing a verification challenge. Clear it by hand in the automation profile, then retry.`
+                : `${adapter.label} session is not usable (${probe.state}). Reconnect the account.`,
+              probe.state === "CHALLENGE"
+                ? FailureCategory.HUMAN_ACTION_REQUIRED
+                : FailureCategory.AUTH_SESSION,
+              PublishStage.SESSION_RESTORED,
+              { evidence: probe.evidence },
             );
           }
-          await log("Account authenticated", { handle: probe.handle });
+
+          await advance(PublishStage.AUTHENTICATED);
+          await log("Account authenticated", {
+            handle: probe.handle,
+            evidence: probe.evidence,
+          });
 
           try {
-            return await adapter.publishViaBrowser({
+            const outcome = await adapter.publishViaBrowser({
               page,
               mediaPath: absolutePath(target.post.asset.storageKey),
               caption,
@@ -223,34 +356,45 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
               publishAt: nativeSchedule,
               log,
             });
+            await advance(PublishStage.SUBMITTED);
+            return outcome;
           } catch (error) {
-            // Capture the page while the context is still open — this is the
-            // only moment a useful screenshot exists.
+            // Photograph the page while the context is still open — the only
+            // moment a useful screenshot exists.
+            const { category, stage: failedStage } = classifyError(error);
             const key = storageKeys.attemptScreenshot(jobId, attemptNo);
+            let screenshotKey: string | null = null;
             try {
-              const shot = await page.screenshot({ fullPage: true });
-              await writeBuffer(key, shot);
+              await writeBuffer(key, await page.screenshot({ fullPage: true }));
+              screenshotKey = key;
               await log("Captured failure screenshot", { key });
-              throw new PublishFailure(
-                error instanceof Error ? error.message : String(error),
-                key,
-                { cause: error },
-              );
             } catch (screenshotError) {
-              if (screenshotError instanceof PublishFailure) throw screenshotError;
               await log("Could not capture a failure screenshot", {
                 reason: String(screenshotError),
               });
-              throw error;
             }
+            throw new PublishFailure(
+              error instanceof Error ? error.message : String(error),
+              screenshotKey,
+              category,
+              failedStage ?? stage,
+              { cause: error },
+            );
           }
         },
-        { headless: true },
+        { headless: true, originUrl: adapter.sessionProbeUrl },
       );
+      await advance(PublishStage.CONFIRMED);
     }
 
-    // --- Success -----------------------------------------------------------
-    const publishedAt = result.status === "published" ? new Date() : null;
+    // --- Reconciliation ----------------------------------------------------
+    const verification: PublicationEvidence | null = result.verification;
+    if (verification) await advance(PublishStage.VERIFIED);
+
+    const publishedAt =
+      result.status === "published"
+        ? (verification?.publishedAt ?? new Date())
+        : null;
 
     await prisma.$transaction([
       prisma.publishAttempt.update({
@@ -258,16 +402,13 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
         data: {
           outcome: AttemptOutcome.SUCCESS,
           finishedAt: new Date(),
+          stageReached: stage,
           steps: steps as unknown as object[],
         },
       }),
       prisma.publishJob.update({
         where: { id: jobId },
-        data: {
-          status: JobStatus.SUCCEEDED,
-          finishedAt: new Date(),
-          lastError: null,
-        },
+        data: { status: JobStatus.SUCCEEDED, finishedAt: new Date(), lastError: null },
       }),
       prisma.postPlatform.update({
         where: { id: target.id },
@@ -276,6 +417,10 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
           remotePostId: result.remotePostId,
           permalink: result.permalink,
           publishedAt,
+          adapterMode,
+          platformAccountId: result.platformAccountId ?? target.account.externalId,
+          verifiedAt: verification ? new Date() : null,
+          verificationMethod: verification?.method ?? null,
           lastError: null,
         },
       }),
@@ -283,17 +428,34 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
 
     await syncPostStatus(target.postId);
 
+    trace("finished", {
+      result: result.status,
+      detail: {
+        remotePostId: result.remotePostId,
+        verified: Boolean(verification),
+        verificationMethod: verification?.method ?? null,
+      },
+    });
+
     await recordActivitySafe({
       action: activityActions.publishSucceeded,
       message:
         result.status === "scheduled"
           ? `Scheduled on ${adapter.label} for ${result.scheduledFor.toISOString()}`
-          : `Published to ${adapter.label}`,
+          : verification
+            ? `Published to ${adapter.label} and confirmed on the platform`
+            : `Published to ${adapter.label} (unconfirmed — no platform evidence)`,
       projectId: target.post.projectId,
       actorType: ActorType.WORKER,
       entityType: "PostPlatform",
       entityId: target.id,
-      metadata: { remotePostId: result.remotePostId, attemptNo },
+      metadata: {
+        remotePostId: result.remotePostId,
+        permalink: result.permalink,
+        attemptNo,
+        adapterMode,
+        verificationMethod: verification?.method ?? null,
+      },
     });
 
     if (result.status === "scheduled") {
@@ -303,16 +465,18 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
       outcome: "published",
       remotePostId: result.remotePostId,
       permalink: result.permalink,
+      verified: Boolean(verification),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const permanent = isPermanent(error);
+    const { category, stage: failedStage } = classifyError(error);
+    if (failedStage) stage = failedStage;
+
     const exhausted = attemptNo >= job.maxAttempts;
-    const retryable = !permanent && !exhausted;
+    const retryable = isRetryableCategory(category) && !exhausted;
 
-    await log(`Attempt ${attemptNo} failed: ${message}`);
+    await log(`Attempt ${attemptNo} failed: ${message}`, { category, stage });
 
-    // Set when the adapter failed with a live page we could photograph.
     const screenshotKey =
       error instanceof PublishFailure ? error.screenshotKey : null;
 
@@ -320,9 +484,11 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
       prisma.publishAttempt.update({
         where: { id: attempt.id },
         data: {
-          outcome: permanent
-            ? AttemptOutcome.PERMANENT_FAILURE
-            : AttemptOutcome.RETRYABLE_FAILURE,
+          outcome: retryable
+            ? AttemptOutcome.RETRYABLE_FAILURE
+            : AttemptOutcome.PERMANENT_FAILURE,
+          failureCategory: category,
+          stageReached: stage,
           finishedAt: new Date(),
           errorMessage: message,
           screenshotKey,
@@ -332,11 +498,13 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
       prisma.publishJob.update({
         where: { id: jobId },
         data: {
+          // Retryable stays FAILED so the sweeper and the operator can retry it;
+          // exhausted goes to DEAD_LETTER so nothing keeps hammering it.
           status: retryable
             ? JobStatus.FAILED
-            : permanent
-              ? JobStatus.FAILED
-              : JobStatus.DEAD_LETTER,
+            : exhausted
+              ? JobStatus.DEAD_LETTER
+              : JobStatus.FAILED,
           finishedAt: retryable ? null : new Date(),
           lastError: message,
         },
@@ -349,18 +517,88 @@ export async function runPublishJob(jobId: string): Promise<RunResult> {
 
     await syncPostStatus(target.postId);
 
+    trace("finished", { result: "failed", category });
+
     await recordActivitySafe({
       action: activityActions.publishFailed,
-      message: `${adapter.label} publish failed on attempt ${attemptNo}: ${message}`,
+      message: `${adapter.label} publish failed on attempt ${attemptNo} at ${stage} (${category}): ${message}`,
       projectId: target.post.projectId,
       actorType: ActorType.WORKER,
       entityType: "PublishJob",
       entityId: jobId,
-      metadata: { attemptNo, permanent, retryable },
+      metadata: { attemptNo, category, stage, retryable, adapterMode },
     });
 
-    return { outcome: "failed", retryable, error: message };
+    return { outcome: "failed", retryable, error: message, category, stage };
   }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Reasons a live publish must not even be attempted.
+ *
+ * These block rather than fail: the work is still valid, it simply cannot run
+ * until a person reconnects the account. Returning a reason keeps the decision
+ * in one place instead of scattered through the runner.
+ */
+async function preflightBlock(
+  socialAccountId: string,
+  adapter: ReturnType<typeof getAdapter>,
+): Promise<string | null> {
+  if (adapter.capabilities.publish === "UNSUPPORTED") {
+    return `${adapter.label} does not support publishing through this system.`;
+  }
+
+  const account = await prisma.socialAccount.findUnique({
+    where: { id: socialAccountId },
+    select: { status: true, handle: true },
+  });
+  if (!account) return "The destination account no longer exists.";
+
+  if (account.status !== AccountStatus.CONNECTED) {
+    return `${adapter.label} account ${account.handle} is ${account.status.toLowerCase().replace(/_/g, " ")}. Reconnect it before publishing.`;
+  }
+  if (!(await hasStoredSession(socialAccountId))) {
+    return `${adapter.label} account ${account.handle} has no stored session. Reconnect it before publishing.`;
+  }
+  return null;
+}
+
+async function blockJob(
+  jobId: string,
+  postPlatformId: string,
+  reason: string,
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.publishJob.update({
+      where: { id: jobId },
+      data: { status: JobStatus.BLOCKED, lastError: reason, finishedAt: null },
+    }),
+    // PENDING, not FAILED: nothing was attempted, and reconnecting makes this
+    // runnable again without any operator action on the post itself.
+    prisma.postPlatform.update({
+      where: { id: postPlatformId },
+      data: { status: PostPlatformStatus.PENDING, lastError: reason },
+    }),
+  ]);
+}
+
+async function handleUnusableSession(
+  socialAccountId: string,
+  state: string,
+  evidence: string,
+): Promise<void> {
+  await markSessionExpired(socialAccountId);
+  await prisma.socialAccount.update({
+    where: { id: socialAccountId },
+    data: {
+      status:
+        state === "CHALLENGE" ? AccountStatus.CHALLENGE : AccountStatus.NEEDS_REAUTH,
+      lastError: evidence,
+      lastCheckedAt: new Date(),
+    },
+  });
 }
 
 /**
@@ -386,4 +624,62 @@ export async function syncPostStatus(postId: string): Promise<void> {
   else status = PostStatus.SCHEDULED;
 
   await prisma.post.update({ where: { id: postId }, data: { status } });
+}
+
+/**
+ * Re-reads the platform for destinations that published but were never
+ * confirmed, and records the evidence. Lets a publication whose verification was
+ * interrupted be reconciled later without republishing anything.
+ */
+export async function reconcileUnverified(
+  socialAccountId: string,
+  limit = 10,
+): Promise<{ checked: number; verified: number }> {
+  const targets = await prisma.postPlatform.findMany({
+    where: {
+      socialAccountId,
+      status: PostPlatformStatus.PUBLISHED,
+      verifiedAt: null,
+      adapterMode: AdapterMode.BROWSER_ASSISTED,
+    },
+    orderBy: { publishedAt: "desc" },
+    take: limit,
+    include: { post: { include: { variant: true } } },
+  });
+
+  if (targets.length === 0) return { checked: 0, verified: 0 };
+
+  const adapter = getAdapter(targets[0].platform);
+  if (typeof adapter.verifyPublication !== "function") {
+    return { checked: targets.length, verified: 0 };
+  }
+
+  let verified = 0;
+  await withAccountSession(
+    socialAccountId,
+    async (page) => {
+      for (const destination of targets) {
+        const evidence = await adapter.verifyPublication!({
+          page,
+          remotePostId: destination.remotePostId,
+          caption: destination.post.variant.caption,
+          log: async () => {},
+        });
+        if (!evidence) continue;
+        await prisma.postPlatform.update({
+          where: { id: destination.id },
+          data: {
+            remotePostId: destination.remotePostId ?? evidence.remotePostId,
+            permalink: destination.permalink ?? evidence.permalink,
+            verifiedAt: new Date(),
+            verificationMethod: evidence.method,
+          },
+        });
+        verified += 1;
+      }
+    },
+    { headless: true, originUrl: adapter.sessionProbeUrl },
+  );
+
+  return { checked: targets.length, verified };
 }
