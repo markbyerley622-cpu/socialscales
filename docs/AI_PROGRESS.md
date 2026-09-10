@@ -3,7 +3,7 @@
 Resume point for a fresh session. Read this plus `docs/DECISIONS.md` and the
 diff; the conversation is not needed.
 
-**Last updated:** 2026-09-10 — intelligence programme phase 2 (AI orchestration)
+**Last updated:** 2026-09-10 — intelligence programme phase 3 (strategy engine)
 
 ---
 
@@ -33,9 +33,9 @@ of the build phases above.
 |---|---|---|
 | 1 | Foundation: workspace, brand, objectives, audiences | done — `90f4dbe` |
 | 1a | Account vs global/external evidence separation | done — `90f4dbe` |
-| 2 | AI orchestration boundary | **done — this pass** |
-| 3 | Strategy engine | next |
-| 4 | Content director | not started |
+| 2 | AI orchestration boundary | done — `abaf924` |
+| 3 | Strategy engine | **done — this pass** |
+| 4 | Content director | next |
 | 5 | Asset ingestion + analysis | not started |
 | 6 | Creative variants | not started |
 | 7 | Rendering | not started |
@@ -75,6 +75,42 @@ is configured. The prompts, the schemas and the repair loop are exercised agains
 a stub provider and against the deterministic provider. The first real call may
 find prompt wording that needs work; the validation and repair machinery is what
 makes that recoverable rather than silent.
+
+---
+
+## Intelligence phase 3: the strategy engine
+
+**One line:** a brand now gets an immutable, versioned strategy assembled from
+its own evidence and general priors, where every decision links to the evidence
+behind it with the weight that decision was actually made from.
+
+- `buildStrategyContext()` assembles everything the engine may reason from:
+  brand, objectives (weights normalised at read time), audiences, pillars, the
+  account's real state, and each creative dimension's options ranked by resolved
+  evidence weight. It is the typed input to the prompt, so it is stored on the
+  `AIJob` — a strategy can be re-derived from the picture the system had, not
+  from today's data.
+- `strategy-draft@1.0.0` is registered with a full deterministic implementation,
+  so a strategy can be produced with no API key.
+- Three honesty constraints are enforced in `refine` and tested:
+  1. Cited evidence ids must exist. An invented citation is repaired, or the
+     strategy is not written at all.
+  2. Audiences, objectives, pillars and formats must be ones this brand has.
+  3. Confidence is capped by the account's state, not by the argument's
+     coherence. A cold account gets LOW however good the reasoning.
+- `StrategyEvidence` links are per-decision (`hookFamilies`,
+  `recommendedFormats`, `hypotheses.N`), so "why these hooks?" is answerable
+  specifically rather than as one undifferentiated pile.
+- Versions are immutable. A new one supersedes the old, which stays readable,
+  and each stores the `accountState` it planned from.
+- `/strategy` shows the plan, the per-decision basis with evidence classes kept
+  separate, hypotheses marked untested where they are, risks, and the version
+  history.
+
+**What is not proven:** every strategy this system can produce today is LOW
+confidence and prior-only, because nothing has been published for real. That is
+the correct answer for this account's actual state, not a limitation of the
+engine — it changes on its own once real results arrive.
 
 ---
 
@@ -235,6 +271,9 @@ src/server/intelligence/
   learning.ts             hypothesis -> supported lifecycle
 src/server/knowledge/     global priors / external providers; cannot write
                           ACCOUNT_EVIDENCE
+src/server/strategy/
+  context.ts              everything the engine may reason from
+  engine.ts               immutable versions + per-decision evidence links
 src/server/ai/orchestration/
   run.ts                  runAiOperation — THE boundary
   registry.ts             versioned prompts + hashes
@@ -243,22 +282,22 @@ src/server/ai/orchestration/
   accounting.ts           spend and latency, read from AIUsageLog
   status.ts               what the boundary is doing, for diagnostics
   providers/              deterministic · anthropic (inactive without a key)
-  prompts/                asset-analysis · copy-variants
+  prompts/                asset-analysis · copy-variants · strategy-draft
 worker/index.ts           6 queues, sweeper, heartbeat, reconciliation
 tests/                    unit · pipeline · live-publishing · publishing-gates ·
                           queue-reschedule (Redis-backed) ·
-                          evidence-weighting · ai-orchestration
+                          evidence-weighting · ai-orchestration ·
+                          strategy-engine
 ```
 
 ---
 
 ## Next concrete actions
 
-1. **Intelligence phase 3: the strategy engine.** Consume `EvidenceSource` and
-   `Learning` through the weighting mechanism, produce an immutable
-   `StrategyVersion` with `StrategyEvidence` links, and register a
-   `strategy-draft` prompt with a deterministic implementation so it works with
-   no API key.
+1. **Intelligence phase 4: the content director.** Turn the active strategy into
+   a concrete plan — which pillar, which format, which hook family, on which day
+   — and carry the strategy version forward onto every item it produces so a
+   published post can be traced back to the plan that asked for it.
 2. **Publish one real TikTok post.** Blocked only on a test account and a human
    sign-in. Everything else is in place.
 3. **Fix whatever selectors the live run breaks.** Expected.
@@ -346,3 +385,14 @@ types or tests.
 14. **`Date.now()` in a server component fails lint** under the React compiler's
     purity rule, even in a `force-dynamic` page. Trailing-window queries take a
     day count and compute the cutoff inside the data layer (`recentAiSpend`).
+
+### Intelligence phase 3
+
+15. **`ContentPillar` had no `description` on the seeded dev projects and no
+    objectives or audiences at all.** The strategy engine has to work in that
+    state — it is the honest cold-start case — so the deterministic
+    implementation returns `null` for audience and objective rather than
+    inventing a plausible one. The dev render exercised exactly this path.
+16. **MSYS path mangling** rewrote a `/strategy` argument into
+    `C:/Program Files/Git/strategy` when passed to a script from Git Bash. Use
+    `MSYS_NO_PATHCONV=1` for any argument that is a URL path.

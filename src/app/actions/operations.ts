@@ -11,6 +11,7 @@ import { queueJobId, queues } from "@/server/jobs/queues";
 import { syncAnalytics } from "@/server/analytics/snapshots";
 import { refreshRecommendations } from "@/server/learning/recommendations";
 import { refreshTrends } from "@/server/learning/trends";
+import { activateStrategy, generateStrategy } from "@/server/strategy";
 import {
   Platform,
   PublishPolicy,
@@ -362,5 +363,62 @@ export async function setPublishPolicyAction(
     };
   } catch (error) {
     return fail(error, "Could not update the policy");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Strategy
+// ---------------------------------------------------------------------------
+
+export async function generateStrategyAction(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const projectId = String(formData.get("projectId") ?? "");
+    if (!projectId) return { ok: false, message: "Pick a project first." };
+    const activate = formData.get("activate") === "1";
+
+    const project = await prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { workspaceId: true, slug: true },
+    });
+
+    const result = await generateStrategy({
+      workspaceId: project.workspaceId,
+      projectId,
+      activate,
+    });
+
+    revalidatePath("/strategy");
+    revalidatePath(`/projects/${project.slug}`);
+
+    if (!result.ok) {
+      // The draft is rejected, not silently downgraded: no StrategyVersion was
+      // written, so the previous one is still the current one.
+      return {
+        ok: false,
+        message: `Strategy rejected (${result.errorKind}): ${result.reason}`,
+      };
+    }
+    return {
+      ok: true,
+      message: activate
+        ? `Strategy v${result.version} is now active.`
+        : `Strategy v${result.version} drafted. Review it, then activate.`,
+    };
+  } catch (error) {
+    return fail(error, "Could not draft a strategy");
+  }
+}
+
+export async function activateStrategyAction(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const strategyId = String(formData.get("strategyId") ?? "");
+    if (!strategyId) return { ok: false, message: "Missing strategy." };
+    await activateStrategy(strategyId);
+    revalidatePath("/strategy");
+    return { ok: true, message: "Strategy activated. The previous one is kept as superseded." };
+  } catch (error) {
+    return fail(error, "Could not activate the strategy");
   }
 }

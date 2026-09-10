@@ -251,3 +251,56 @@ the record rather than the rule answer appearing from nowhere. Under
 3. Export it from `prompts/index.ts`.
 4. Bump `version` on any later change to wording, schema or token budget — the
    registry refuses a duplicate name+version, so forgetting fails at import.
+
+---
+
+## The strategy engine
+
+A `StrategyVersion` is one brand's plan at one moment. It is written, never
+edited.
+
+```
+EvidenceSource ──> weighting ──> DimensionDigest (options ranked per dimension)
+                                        |
+BusinessObjective ──┐                   |
+AudienceSegment  ───┼──> StrategyContext ┘
+ContentPillar    ───┤        |
+Brand            ───┘        v
+                     runAiOperation(strategy-draft)
+                             |
+                             v
+                     StrategyVersion  ──< StrategyEvidence >── EvidenceSource
+                             |                (decision, strength)
+                             v
+                     supersedes the previous ACTIVE version
+```
+
+### What the engine is allowed to say
+
+Three constraints are enforced by `refine`, which means a violation is repaired
+or the strategy is not written:
+
+| Constraint | Why |
+|---|---|
+| `basedOn` ids must be in `citableEvidenceIds` | A fabricated citation reads exactly like a real one |
+| Audience, objectives, pillars and formats must be this brand's | A plan for an audience the brand does not have is not a plan |
+| Confidence ≤ `confidenceCeiling(context)` | Confidence is a claim about evidence, so evidence sets it — LOW while cold or while analytics are simulated |
+
+### Per-decision traceability
+
+`StrategyEvidence.decision` records *which* choice an item backs —
+`hookFamilies`, `recommendedFormats`, `hypotheses.2` — so the "why this?" panel
+answers a specific question rather than showing one undifferentiated pile.
+`strength` is recomputed from the same weighting mechanism the decision used, so
+the number shown is the number that decided.
+
+Links come from two places: the ids the draft cited, and the dimension options it
+actually chose. The second matters because choosing "problem_solution" hooks
+rests on that option's evidence whether or not the draft remembered to cite it.
+
+### Cold start
+
+A brand with nothing published gets a real strategy built from priors, marked
+`priorOnly` per decision, capped at LOW confidence, and carrying a risk that says
+so in the first line. `accountState` is snapshotted onto the version, so a later
+reader sees what it was planning from rather than what is true then.

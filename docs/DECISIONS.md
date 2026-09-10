@@ -418,3 +418,71 @@ guess.
 
 **Consequences.** Adding a model means adding its prices, or its usage silently
 contributes nothing to the bill — which the `priced` flag is there to surface.
+
+---
+
+## 2026-09-10 · A strategy may only cite evidence that exists
+
+**Context.** The most damaging thing a strategy layer can do is produce a
+confident plan with fabricated support. It reads exactly like a well-founded one,
+and there is no way to tell them apart after the fact.
+
+**Decision.** `buildStrategyContext` publishes `citableEvidenceIds`, and the
+`strategy-draft` prompt's `refine` rejects any `basedOn` id that is not in it. The
+same check rejects audiences, objectives, pillars and formats this brand does not
+have. An invented citation is a validation failure that goes through the repair
+loop, and a strategy that cannot be repaired is never written.
+
+**Alternatives.** Filtering unknown ids out silently; letting the strategy carry
+free-text justifications instead of ids.
+
+**Rationale.** Silent filtering turns a fabrication into a strategy with slightly
+less support, which is worse than a failure because nobody learns that it
+happened. Free-text justification cannot be checked at all.
+
+**Consequences.** `StrategyEvidence` rows can never dangle. The engine also links
+the options the strategy *chose* — not only the ones it remembered to cite —
+because picking "problem_solution" hooks rests on that option's evidence either
+way.
+
+---
+
+## 2026-09-10 · Strategy confidence is capped by the account, not by the argument
+
+**Context.** A coherent argument built entirely from shipped priors reads as
+confident. Nothing in the text distinguishes it from one built on two hundred
+posts of this brand's own results.
+
+**Decision.** `confidenceCeiling(context)` caps confidence from the account's
+state alone: LOW while the account is cold or while every analytics number on
+file is simulated; MEDIUM from four account observations; HIGH only with an
+experiment and twelve observations. A draft claiming more is rejected with the
+reason.
+
+**Rationale.** Confidence is a claim about evidence, so evidence is what should
+set it. Letting a generator assert its own confidence puts the one number an
+operator will act on entirely inside the thing being checked.
+
+**Consequences.** Every strategy this system can produce today is LOW confidence,
+because nothing has been published for real. That is the correct answer, and it
+will change on its own as real results arrive.
+
+---
+
+## 2026-09-10 · Strategy versions are immutable
+
+**Context.** Strategy changes as evidence arrives. The tempting shape is one
+mutable row per project.
+
+**Decision.** `StrategyVersion` is append-only. A new version is created, the
+previous ACTIVE one becomes SUPERSEDED with `supersededById` pointing forward,
+and each version stores `accountState` — a snapshot of what the account looked
+like when it was written.
+
+**Rationale.** The question worth answering later is "what did we believe then,
+and on what?", and a mutable row destroys the only copy of that answer. The
+snapshot matters because re-deriving the basis from today's data would show a
+picture the strategy was never written from.
+
+**Consequences.** More rows, and a history screen to read them. Activation is a
+transaction so two concurrent activations cannot both end ACTIVE.

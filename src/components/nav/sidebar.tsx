@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
+  Compass,
   CalendarDays,
   FlaskConical,
   Gauge,
@@ -50,6 +51,7 @@ function groups(counts: SidebarCounts): NavGroup[] {
       items: [
         { href: "/", label: "Overview", icon: <LayoutDashboard /> },
         { href: "/projects", label: "Projects", icon: <Sparkles /> },
+        { href: "/strategy", label: "Strategy", icon: <Compass /> },
         { href: "/content", label: "Content", icon: <Video /> },
         { href: "/calendar", label: "Calendar", icon: <CalendarDays /> },
         {

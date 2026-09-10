@@ -9,3 +9,5 @@ export { assetAnalysisPrompt } from "./asset-analysis";
 export type { AssetAnalysisInput, AssetAnalysisOutput } from "./asset-analysis";
 export { copyVariantsPrompt } from "./copy-variants";
 export type { CopyVariant, CopyVariantsInput, CopyVariantsOutput } from "./copy-variants";
+export { strategyDraftPrompt, strategyDraftSchema } from "./strategy-draft";
+export type { StrategyDraftInput, StrategyDraftOutput } from "./strategy-draft";
