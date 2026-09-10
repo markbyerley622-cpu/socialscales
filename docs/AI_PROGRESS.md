@@ -3,7 +3,7 @@
 Resume point for a fresh session. Read this plus `docs/DECISIONS.md` and the
 diff; the conversation is not needed.
 
-**Last updated:** 2026-09-10 — intelligence programme phase 4 (content director)
+**Last updated:** 2026-09-10 — intelligence programme phase 5 (asset ingestion + analysis)
 
 ---
 
@@ -35,9 +35,9 @@ of the build phases above.
 | 1a | Account vs global/external evidence separation | done — `90f4dbe` |
 | 2 | AI orchestration boundary | done — `abaf924` |
 | 3 | Strategy engine | done — `33dc642` |
-| 4 | Content director | **done — this pass** |
-| 5 | Asset ingestion + analysis | next |
-| 6 | Creative variants | not started |
+| 4 | Content director | done — `92ecdf8` |
+| 5 | Asset ingestion + analysis | **done — this pass** |
+| 6 | Creative variants | next |
 | 7 | Rendering | not started |
 | 8 | Distribution | not started |
 | 9 | Analytics | not started |
@@ -146,6 +146,40 @@ the plan to the evidence that argued for it.
 the strategy's choices across pillars and formats. It says so — in each brief's
 angle text and in the plan's `gaps` — rather than presenting a rotation as an
 idea. Real creative angles need the model, which needs a key.
+
+---
+
+## Intelligence phase 5: asset ingestion and analysis
+
+**One line:** analysis and copy drafting now run through `runAiOperation`, each
+leaving its own `AIJob`, and the analysis record carries what it rests on and
+what it could not determine rather than only its answers.
+
+- `analyzeAsset()` calls no model directly. It runs `asset-analysis` then
+  `copy-variants` through the boundary, so a single asset produces two attributable
+  jobs with their own cost, latency and prompt version.
+- `AIAnalysis` gained `confidence`, `basis[]`, `unknowns[]`, `promptVersion` and
+  `aiJobId`. `model` became nullable — a deterministic provider has no model, and
+  writing the provider name there would be a small lie. `transcript` is null:
+  nothing in this path has heard the audio.
+- Nothing unvalidated is written. A provider that answers with the wrong shape
+  leaves the asset `ANALYSIS_FAILED`, an `AIJob` with status `INVALID_OUTPUT`,
+  the cost of the attempts it made, and no `AIAnalysis` row.
+- Re-analysis appends. Existing analyses and variants are never overwritten, and
+  the control variant stays the first of the first batch.
+- The scorecard stays rule-based on purpose. Asking a model to score its own copy
+  would produce a number that reads like a performance prediction and is not one.
+- `ContentAsset.briefId` links an asset to the brief it was made for. The link is
+  declared by a person, never inferred from pillar and date: attach →
+  IN_PRODUCTION, analyse → READY, create a post → FULFILLED with the post id.
+- Upload validation was already sound and is unchanged: magic-byte sniffing
+  against a five-entry allowlist, per-kind size caps, and storage keys derived
+  from the content hash so a filename cannot traverse anywhere.
+
+**What is not proven:** with no API key the analysis still cannot see or hear the
+media — it reads a filename and container facts, reports LOW confidence, and says
+"what is said or shown in the media itself" under unknowns. That is the true
+ceiling of the input, not a limitation of the plumbing.
 
 ---
 
@@ -289,7 +323,7 @@ live-gate proof       2 jobs BLOCKED at PREFLIGHT with live mode on
 ## Where things are
 
 ```
-prisma/schema.prisma      37 models, 37 enums
+prisma/schema.prisma      37 models, 37 enums (6 migrations)
 src/server/platforms/
   types.ts                capability model, AdapterFailure, PublicationEvidence
   dom.ts                  candidate resolution + drift diagnostics
@@ -326,17 +360,18 @@ worker/index.ts           6 queues, sweeper, heartbeat, reconciliation
 tests/                    unit · pipeline · live-publishing · publishing-gates ·
                           queue-reschedule (Redis-backed) ·
                           evidence-weighting · ai-orchestration ·
-                          strategy-engine · content-director
+                          strategy-engine · content-director ·
+                          asset-analysis
 ```
 
 ---
 
 ## Next concrete actions
 
-1. **Intelligence phase 5: asset ingestion and analysis.** Route asset analysis
-   through `runAiOperation` and the registered `asset-analysis` prompt instead of
-   calling the heuristic provider directly, and attach an asset to the brief it
-   fulfils so production has a queue rather than a folder.
+1. **Intelligence phase 6: creative variants.** Give a variant a structured
+   treatment — hook, beats, on-screen text, CTA placement — rather than only a
+   caption, and carry the brief's key message onto it so a variant can be checked
+   against what it was commissioned to say.
 2. **Publish one real TikTok post.** Blocked only on a test account and a human
    sign-in. Everything else is in place.
 3. **Fix whatever selectors the live run breaks.** Expected.
@@ -443,3 +478,13 @@ types or tests.
     `angle` failed the 20-character floor before the "angle must not restate its
     basis" check ran. Correct ordering — structure before semantics — but the
     test had to pick a longer basis to reach the rule it was asserting on.
+
+### Intelligence phase 5
+
+18. **`process.env` changes do not reach `env`.** A test tried to force the AI
+    boundary into an unavailable state by setting `AI_MODEL_PROVIDER` at runtime;
+    `src/env.ts` reads process.env once at module load, so it had no effect and
+    the test passed for the wrong reason. `analyzeAsset` now takes the same
+    `provider` test seam the strategy engine and content director already expose.
+19. **`createPost` returns `postId`, not a Post.** Worth knowing before writing
+    `post.id` and getting `undefined` compared against a real value.

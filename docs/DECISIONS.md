@@ -559,3 +559,61 @@ delivered mix, where delivered counts only briefs a post was actually made from.
 **Rationale.** "We planned six screen recordings and made one, because nobody had
 the footage" is a finding about the operation. Deleting the five destroys it, and
 counting them as delivered would be worse.
+
+---
+
+## 2026-09-10 · Analysis stores its basis and its unknowns, not just its answers
+
+**Context.** The analysis path reads a filename and container facts. It has not
+seen or heard the media. Storing `topic: "CSV imports"` next to nothing else
+makes a filename guess indistinguishable from knowledge.
+
+**Decision.** `AIAnalysis` gained `confidence`, `basis[]` and `unknowns[]`, and
+the `asset-analysis` schema requires at least one item in `basis`. `transcript`
+is null rather than empty — nothing in this path has heard the audio.
+`AIAnalysis.model` became nullable, because a deterministic provider has no
+model and writing the provider name there would be a small lie.
+
+**Rationale.** The spec's rule is that unsupported guesses must not be stored as
+fact. The enforceable version of that is requiring every conclusion to arrive
+with what it rests on, and requiring what could not be determined to be named
+rather than filled in plausibly.
+
+**Consequences.** The asset screen shows both lists and a confidence badge, so an
+operator can see that a topic came from the filename before acting on it.
+
+---
+
+## 2026-09-10 · Copy scoring stays rule-based
+
+**Context.** Analysis and copy generation now go through `runAiOperation`. The
+obvious next step is to route the scorecard through it too.
+
+**Decision.** It stays on `heuristicProvider.scoreCopy`. The scorecard is a set
+of writing heuristics — hook, clarity, curiosity, CTA, trend relevance — and the
+UI labels it as such.
+
+**Rationale.** Asking a model to score its own copy produces a number that reads
+like a prediction of performance and is not one. Performance claims belong to the
+learning engine and only from this account's own evidence. Keeping the scorecard
+deterministic keeps that boundary obvious rather than a matter of wording.
+
+---
+
+## 2026-09-10 · An asset claims a brief; nothing is matched automatically
+
+**Context.** With briefs and assets both present, matching them by pillar,
+format and date would work most of the time.
+
+**Decision.** `ContentAsset.briefId` is set only by `attachAssetToBrief`, which
+someone calls. Attaching moves the brief to IN_PRODUCTION, analysing the asset
+moves it to READY, and creating a post from it marks it FULFILLED with the post
+id. Re-attaching another asset never walks a fulfilled brief backwards.
+
+**Rationale.** "Most of the time" is the problem. A wrong automatic match gives a
+confident and false answer to "why did we post this?", which is worse than the
+honest "this asset is not linked to a brief" — and an unlinked asset still
+publishes fine.
+
+**Consequences.** Traceability is opt-in per asset. The asset screen offers the
+open briefs in a dropdown, and says plainly what is lost by leaving it unlinked.

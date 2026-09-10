@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import {
+  attachAssetToBrief,
+  detachAssetFromBrief,
+} from "@/server/content-director";
+import {
   approvePost,
   createPost,
   rejectPost,
@@ -300,4 +304,32 @@ function parseLocalDateTime(value: FormDataEntryValue | null): string | null {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
+}
+
+export async function attachAssetToBriefAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const assetId = String(formData.get("assetId") ?? "");
+    const briefId = String(formData.get("briefId") ?? "");
+    if (!assetId) return { ok: false, message: "Missing asset." };
+
+    if (!briefId) {
+      await detachAssetFromBrief(assetId);
+      revalidatePath(`/content/${assetId}`);
+      revalidatePath("/plan");
+      return { ok: true, message: "Unlinked from its brief." };
+    }
+
+    await attachAssetToBrief({ assetId, briefId });
+    revalidatePath(`/content/${assetId}`);
+    revalidatePath("/plan");
+    return {
+      ok: true,
+      message: "Linked. The brief now shows as in production, and publishing it will fulfil the brief.",
+    };
+  } catch (error) {
+    return fail(error, "Could not link the asset to that brief");
+  }
 }

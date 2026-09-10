@@ -11,8 +11,11 @@ export {
 export {
   activateContentPlan,
   activePlan,
+  attachAssetToBrief,
   createContentPlan,
+  detachAssetFromBrief,
   fulfilBrief,
+  openBriefs,
   planAdherence,
   planHistory,
   setBriefStatus,

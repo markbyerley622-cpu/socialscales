@@ -577,33 +577,52 @@ model ContentAsset {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
+  /// The brief this asset was made for, when it was made for one.
+  briefId String?
+
   project  Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   uploader User?            @relation("AssetUploader", fields: [uploaderId], references: [id], onDelete: SetNull)
   pillar   ContentPillar?   @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  brief    ContentBrief?    @relation(fields: [briefId], references: [id], onDelete: SetNull)
   analyses AIAnalysis[]
   variants ContentVariant[]
   posts    Post[]
 
   @@unique([projectId, checksum])
   @@index([projectId, status])
+  @@index([briefId])
   @@index([createdAt])
 }
 
 /// One analysis run over an asset. Append-only so we can compare providers and
 /// see how suggestions changed over time.
 model AIAnalysis {
-  id             String        @id @default(cuid())
-  assetId        String
-  provider       String
-  model          String
+  id       String  @id @default(cuid())
+  assetId  String
+  provider String
+  /// Null when a deterministic provider produced it — rules have no model.
+  model    String?
+
   format         ContentFormat @default(UNKNOWN)
   topic          String?
   likelyAudience String?
   visualSummary  String?
   transcript     String?
+
+  /// How much the input actually supports these conclusions.
+  confidence Confidence @default(LOW)
+  /// What each conclusion rests on. Empty means nothing was asserted.
+  basis      String[]   @default([])
+  /// What could not be determined, named rather than filled in plausibly.
+  unknowns   String[]   @default([])
+
+  /// The registered prompt, and the orchestration job that ran it.
+  promptVersion String?
+  aiJobId       String?
+
   /// Full provider payload, kept for auditability.
-  raw            Json
-  createdAt      DateTime      @default(now())
+  raw       Json
+  createdAt DateTime @default(now())
 
   asset ContentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
@@ -1389,6 +1408,7 @@ model ContentBrief {
   project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   targetAudience AudienceSegment? @relation(fields: [targetAudienceId], references: [id], onDelete: SetNull)
   post           Post?            @relation(fields: [postId], references: [id], onDelete: SetNull)
+  assets         ContentAsset[]
 
   @@unique([planId, sequence])
   @@index([projectId, status])

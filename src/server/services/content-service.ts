@@ -1,6 +1,12 @@
 import path from "node:path";
 import { prisma } from "@/server/db";
-import { getAiProvider } from "@/server/ai";
+import { heuristicProvider } from "@/server/ai/heuristic-provider";
+import {
+  assetAnalysisPrompt,
+  copyVariantsPrompt,
+  runAiOperation,
+} from "@/server/ai/orchestration";
+import type { ModelProvider } from "@/server/ai/orchestration";
 import { probeMedia } from "@/server/media/probe";
 import { validateUpload, type MediaType } from "@/server/media/validate";
 import { sha256Hex } from "@/server/security/crypto";
@@ -10,6 +16,8 @@ import { buildBrandContext } from "./brand-context";
 import {
   ActorType,
   AssetStatus,
+  BriefStatus,
+  Confidence,
   type ContentFormat,
 } from "@/generated/prisma/enums";
 import type { ContentAsset } from "@/generated/prisma/client";
@@ -125,22 +133,48 @@ export type AnalyzeResult = {
   analysisId: string;
   format: ContentFormat;
   variantIds: string[];
+  /** Never claims more than the input supports. */
+  confidence: Confidence;
+  /** True when a language model produced this, false when rules did. */
+  usedModel: boolean;
 };
 
+export class AnalysisFailedError extends Error {
+  constructor(
+    readonly errorKind: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AnalysisFailedError";
+  }
+}
+
 /**
- * Runs the configured AI provider over an asset and writes the analysis plus a
- * set of draft variants. Idempotent in effect: calling it again appends a new
- * analysis and a new batch of variants rather than mutating existing ones, so
- * nothing the operator has edited is ever silently overwritten.
+ * Analyses an asset and drafts copy variants for it.
+ *
+ * Both steps go through `runAiOperation`, so each one leaves an `AIJob` with its
+ * provider, prompt version, cost and latency, and each result is schema-validated
+ * before anything is written. Nothing here calls a model directly.
+ *
+ * Idempotent in effect: calling it again appends a new analysis and a new batch
+ * of variants rather than mutating existing ones, so nothing an operator has
+ * edited is ever silently overwritten.
  */
 export async function analyzeAsset(input: {
   assetId: string;
   userId: string | null;
   variantCount?: number;
+  /** Test seam, matching the strategy engine and content director. */
+  provider?: ModelProvider;
 }): Promise<AnalyzeResult> {
   const asset = await prisma.contentAsset.findUniqueOrThrow({
     where: { id: input.assetId },
-    include: { pillar: true, variants: { select: { id: true } } },
+    include: {
+      pillar: true,
+      variants: { select: { id: true } },
+      project: { select: { workspaceId: true } },
+      brief: { select: { id: true } },
+    },
   });
 
   await prisma.contentAsset.update({
@@ -150,7 +184,7 @@ export async function analyzeAsset(input: {
 
   try {
     const brand = await buildBrandContext(asset.projectId);
-    const provider = getAiProvider();
+    const workspaceId = asset.project.workspaceId;
 
     const facts = {
       title: asset.title,
@@ -164,26 +198,62 @@ export async function analyzeAsset(input: {
       pillar: asset.pillar?.name ?? null,
     } as const;
 
-    const analysis = await provider.analyzeAsset({ asset: facts, brand });
-
-    const suggestions = await provider.suggestCopy({
-      asset: facts,
-      brand,
-      analysis,
-      count: input.variantCount ?? 3,
+    const analysed = await runAiOperation({
+      prompt: assetAnalysisPrompt,
+      input: { asset: facts, brand },
+      workspaceId,
+      projectId: asset.projectId,
+      ...(input.provider ? { provider: input.provider } : {}),
     });
+    if (!analysed.ok) {
+      throw new AnalysisFailedError(analysed.errorKind, analysed.message);
+    }
+
+    const analysis = analysed.value;
+    // The copy prompt takes the older AnalysisResult shape, which carries a
+    // transcript the analysis prompt cannot fill — it has never seen the media.
+    // Null is the honest value there, not an empty string.
+    const forCopy = {
+      format: analysis.format as ContentFormat,
+      topic: analysis.topic,
+      likelyAudience: analysis.likelyAudience,
+      visualSummary: analysis.visualSummary,
+      transcript: null,
+      raw: analysis as unknown as Record<string, unknown>,
+    };
+
+    const written = await runAiOperation({
+      prompt: copyVariantsPrompt,
+      input: {
+        asset: facts,
+        brand,
+        analysis: forCopy,
+        count: input.variantCount ?? 3,
+      },
+      workspaceId,
+      projectId: asset.projectId,
+      ...(input.provider ? { provider: input.provider } : {}),
+    });
+    if (!written.ok) {
+      throw new AnalysisFailedError(written.errorKind, written.message);
+    }
 
     const analysisRow = await prisma.aIAnalysis.create({
       data: {
         assetId: asset.id,
-        provider: provider.name,
-        model: provider.model,
-        format: analysis.format,
+        provider: analysed.job.provenance.providerName,
+        model: analysed.job.provenance.model,
+        format: analysis.format as ContentFormat,
         topic: analysis.topic,
         likelyAudience: analysis.likelyAudience,
         visualSummary: analysis.visualSummary,
-        transcript: analysis.transcript,
-        raw: analysis.raw as object,
+        transcript: null,
+        confidence: toConfidence(analysis.confidence),
+        basis: analysis.basis,
+        unknowns: analysis.unknowns,
+        promptVersion: `${analysed.job.provenance.promptName}@${analysed.job.provenance.promptVersion}`,
+        aiJobId: analysed.job.id,
+        raw: analysis as unknown as object,
       },
     });
 
@@ -191,8 +261,15 @@ export async function analyzeAsset(input: {
     const hasControl = asset.variants.length > 0;
 
     const variantIds: string[] = [];
-    for (const [index, suggestion] of suggestions.entries()) {
-      const scorecard = provider.scoreCopy({ suggestion, brand, analysis });
+    for (const [index, suggestion] of written.value.variants.entries()) {
+      // Scoring stays rule-based on purpose: these are writing heuristics and
+      // the UI labels them as such. Asking a model to score its own copy would
+      // produce a number that reads like a prediction and is not one.
+      const scorecard = heuristicProvider.scoreCopy({
+        suggestion,
+        brand,
+        analysis: forCopy,
+      });
       const variant = await prisma.contentVariant.create({
         data: {
           assetId: asset.id,
@@ -214,25 +291,40 @@ export async function analyzeAsset(input: {
       data: { status: AssetStatus.ANALYZED },
     });
 
+    // An asset made for a brief moves that brief along, so the plan shows what
+    // is actually in production rather than only what was asked for.
+    if (asset.brief) {
+      await prisma.contentBrief.update({
+        where: { id: asset.brief.id },
+        data: { status: BriefStatus.READY },
+      });
+    }
+
     await recordActivity({
       action: activityActions.assetAnalyzed,
-      message: `AI generated metadata for "${asset.title}" (${suggestions.length} variants)`,
+      message: `${analysed.job.provenance.deterministic ? "Rules" : analysed.job.provenance.model} generated metadata for "${asset.title}" (${variantIds.length} variants, ${analysis.confidence.toLowerCase()} confidence)`,
       projectId: asset.projectId,
       userId: input.userId,
       actorType: ActorType.SYSTEM,
       entityType: "ContentAsset",
       entityId: asset.id,
       metadata: {
-        provider: provider.name,
+        provider: analysed.job.provenance.providerName,
+        deterministic: analysed.job.provenance.deterministic,
+        promptVersion: analysed.job.provenance.promptVersion,
         format: analysis.format,
-        variantCount: suggestions.length,
+        confidence: analysis.confidence,
+        variantCount: variantIds.length,
+        costUsd: analysed.job.costUsd + written.job.costUsd,
       },
     });
 
     return {
       analysisId: analysisRow.id,
-      format: analysis.format,
+      format: analysis.format as ContentFormat,
       variantIds,
+      confidence: toConfidence(analysis.confidence),
+      usedModel: !analysed.job.provenance.deterministic,
     };
   } catch (error) {
     await prisma.contentAsset.update({
@@ -251,6 +343,14 @@ export async function analyzeAsset(input: {
     });
     throw error;
   }
+}
+
+function toConfidence(value: "LOW" | "MEDIUM" | "HIGH"): Confidence {
+  return value === "HIGH"
+    ? Confidence.HIGH
+    : value === "MEDIUM"
+      ? Confidence.MEDIUM
+      : Confidence.LOW;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +372,9 @@ export async function createVariant(input: {
   });
 
   const brand = await buildBrandContext(asset.projectId);
-  const provider = getAiProvider();
-  const scorecard = provider.scoreCopy({
+  // Rule-based on purpose: the scorecard is a set of writing heuristics, not a
+  // prediction, and the UI says so. It makes no model call.
+  const scorecard = heuristicProvider.scoreCopy({
     suggestion: {
       label: input.label,
       hook: input.hook,
@@ -331,8 +432,9 @@ export async function updateVariant(input: {
   });
 
   const brand = await buildBrandContext(variant.asset.projectId);
-  const provider = getAiProvider();
-  const scorecard = provider.scoreCopy({
+  // Rule-based on purpose: the scorecard is a set of writing heuristics, not a
+  // prediction, and the UI says so. It makes no model call.
+  const scorecard = heuristicProvider.scoreCopy({
     suggestion: {
       label: variant.label,
       hook: input.hook,

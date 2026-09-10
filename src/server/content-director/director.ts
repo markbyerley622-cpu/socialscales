@@ -329,3 +329,68 @@ function targetMix(
 }
 
 export type { PlanContext };
+
+/**
+ * Claims a brief with an asset made for it.
+ *
+ * The link is declared, never inferred. Matching an asset to a brief by pillar
+ * and timing would produce a confident answer to "why did we post this?" that is
+ * sometimes wrong, which is worse than no answer at all.
+ */
+export async function attachAssetToBrief(input: {
+  assetId: string;
+  briefId: string;
+}): Promise<void> {
+  const [asset, brief] = await Promise.all([
+    prisma.contentAsset.findUniqueOrThrow({
+      where: { id: input.assetId },
+      select: { projectId: true },
+    }),
+    prisma.contentBrief.findUniqueOrThrow({
+      where: { id: input.briefId },
+      select: { projectId: true, status: true },
+    }),
+  ]);
+
+  if (asset.projectId !== brief.projectId) {
+    throw new Error("An asset can only fulfil a brief belonging to the same project.");
+  }
+
+  await prisma.$transaction([
+    prisma.contentAsset.update({
+      where: { id: input.assetId },
+      data: { briefId: input.briefId },
+    }),
+    prisma.contentBrief.update({
+      where: { id: input.briefId },
+      data: {
+        // A fulfilled brief already has its post; re-attaching another asset
+        // must not walk its status backwards.
+        status:
+          brief.status === BriefStatus.FULFILLED
+            ? BriefStatus.FULFILLED
+            : BriefStatus.IN_PRODUCTION,
+      },
+    }),
+  ]);
+}
+
+export async function detachAssetFromBrief(assetId: string): Promise<void> {
+  await prisma.contentAsset.update({
+    where: { id: assetId },
+    data: { briefId: null },
+  });
+}
+
+/** Briefs still waiting on an asset. The production queue. */
+export async function openBriefs(projectId: string) {
+  return prisma.contentBrief.findMany({
+    where: {
+      projectId,
+      status: { in: [BriefStatus.PLANNED, BriefStatus.IN_PRODUCTION] },
+      plan: { status: ContentPlanStatus.ACTIVE },
+    },
+    orderBy: [{ plannedFor: "asc" }, { sequence: "asc" }],
+    include: { assets: { select: { id: true, title: true, status: true } } },
+  });
+}

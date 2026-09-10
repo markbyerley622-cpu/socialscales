@@ -6,7 +6,12 @@ import { prisma } from "@/server/db";
 import { loadPostFacts } from "@/server/analytics/aggregate";
 import { estimatePerformance } from "@/server/learning/engine";
 import { getAdapter, listAdapters } from "@/server/platforms/registry";
-import { analyzeAssetAction, createVariantAction } from "@/app/actions/posts";
+import {
+  analyzeAssetAction,
+  attachAssetToBriefAction,
+  createVariantAction,
+} from "@/app/actions/posts";
+import { openBriefs } from "@/server/content-director";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import {
   Badge,
@@ -31,7 +36,7 @@ import {
   platformLabel,
 } from "@/components/ui/status";
 import { bytes, dateTimeLabel, duration, humanize } from "@/lib/utils";
-import { AccountStatus, PublishPolicy } from "@/generated/prisma/enums";
+import { AccountStatus, Confidence, PublishPolicy } from "@/generated/prisma/enums";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +73,7 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
         },
       },
       pillar: true,
+      brief: { select: { id: true, workingTitle: true, strategyBasis: true } },
       uploader: { select: { name: true } },
       analyses: { orderBy: { createdAt: "desc" }, take: 1 },
       variants: {
@@ -88,6 +94,9 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
 
   const analysis = asset.analyses[0] ?? null;
   const facts = await loadPostFacts({ projectId: asset.projectId });
+  // The production queue for this project, so an asset can be pointed at the
+  // brief it was made for. The link is declared, never inferred.
+  const briefs = await openBriefs(asset.projectId);
 
   // Per-account eligibility, decided by each platform adapter's own constraints.
   const accounts: ComposerAccount[] = asset.project.accounts.map((account) => {
@@ -195,8 +204,15 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
                 title="Analysis"
                 subtitle={
                   analysis
-                    ? `${analysis.provider} · ${analysis.model}`
+                    ? `${analysis.model ?? `${analysis.provider} — rules, no language model`} · ${analysis.promptVersion ?? "unversioned prompt"}`
                     : "Not analysed yet."
+                }
+                action={
+                  analysis ? (
+                    <Badge tone={confidenceTone(analysis.confidence)}>
+                      {analysis.confidence} confidence
+                    </Badge>
+                  ) : null
                 }
               />
               {analysis ? (
@@ -214,10 +230,40 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
                   <KeyValue label="Transcript">
                     {analysis.transcript ?? (
                       <span className="text-ink-muted">
-                        None — this provider does not transcribe audio.
+                        None — nothing here has heard the audio.
                       </span>
                     )}
                   </KeyValue>
+                  {analysis.basis.length > 0 ? (
+                    <div>
+                      <SectionLabel>What this rests on</SectionLabel>
+                      <ul className="mt-1 space-y-1">
+                        {analysis.basis.map((item, index) => (
+                          <li
+                            key={index}
+                            className="text-[10.5px] leading-relaxed text-ink-secondary"
+                          >
+                            · {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {analysis.unknowns.length > 0 ? (
+                    <div>
+                      <SectionLabel>What it could not determine</SectionLabel>
+                      <ul className="mt-1 space-y-1">
+                        {analysis.unknowns.map((item, index) => (
+                          <li
+                            key={index}
+                            className="text-[10.5px] leading-relaxed text-ink-muted"
+                          >
+                            · {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   {limitationsOf(analysis.raw).length > 0 ? (
                     <div>
                       <SectionLabel>Known limits</SectionLabel>
@@ -241,6 +287,57 @@ export default async function AssetPage(props: PageProps<"/content/[assetId]">) 
                   body="Run the analysis to read the container facts and draft copy for this asset."
                 />
               )}
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="Brief"
+                subtitle="Which planned piece this asset is. Publishing it then fulfils that brief, which is what makes a post traceable back to the strategy."
+              />
+              <div className="px-4 py-3.5">
+                {asset.brief ? (
+                  <div className="space-y-2">
+                    <p className="text-[12.5px] text-ink">{asset.brief.workingTitle}</p>
+                    <p className="text-[11.5px] leading-relaxed text-ink-muted">
+                      Serves: {asset.brief.strategyBasis}
+                    </p>
+                    <ActionForm action={attachAssetToBriefAction}>
+                      <input type="hidden" name="assetId" value={asset.id} />
+                      <input type="hidden" name="briefId" value="" />
+                      <SubmitButton variant="ghost" size="sm" pendingLabel="Unlinking…">
+                        Unlink
+                      </SubmitButton>
+                    </ActionForm>
+                  </div>
+                ) : briefs.length > 0 ? (
+                  <ActionForm
+                    action={attachAssetToBriefAction}
+                    className="flex flex-wrap items-center gap-2"
+                  >
+                    <input type="hidden" name="assetId" value={asset.id} />
+                    <select
+                      name="briefId"
+                      aria-label="Brief this asset fulfils"
+                      className="min-w-0 flex-1 rounded-md border border-hairline bg-surface-raised px-2 py-1.5 text-[12px] text-ink"
+                    >
+                      {briefs.map((brief) => (
+                        <option key={brief.id} value={brief.id}>
+                          #{brief.sequence} {brief.workingTitle}
+                        </option>
+                      ))}
+                    </select>
+                    <SubmitButton variant="ghost" size="sm" pendingLabel="Linking…">
+                      Link
+                    </SubmitButton>
+                  </ActionForm>
+                ) : (
+                  <p className="text-[11.5px] leading-relaxed text-ink-muted">
+                    No open briefs for this project. Plan a window on the Plan screen, or
+                    leave this asset unlinked — an unlinked asset publishes fine, it just
+                    cannot be traced back to a strategy decision.
+                  </p>
+                )}
+              </div>
             </Card>
 
             <Card>
@@ -467,6 +564,12 @@ function parseScorecard(value: unknown): Scorecard | null {
     trendRelevance: numeric("trendRelevance"),
     notes: Array.isArray(record.notes) ? (record.notes as string[]) : [],
   };
+}
+
+function confidenceTone(confidence: Confidence): "good" | "warning" | "neutral" {
+  if (confidence === Confidence.HIGH) return "good";
+  if (confidence === Confidence.MEDIUM) return "neutral";
+  return "warning";
 }
 
 function limitationsOf(raw: unknown): string[] {

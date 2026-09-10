@@ -6,6 +6,7 @@ import { enqueuePublish, cancelPublish } from "./publish-service";
 import {
   ActorType,
   ApprovalState,
+  BriefStatus,
   PostPlatformStatus,
   PostStatus,
   PublishPolicy,
@@ -120,6 +121,16 @@ export async function createPost(
       },
     },
   });
+
+  // Close the loop back to the plan. The asset already knows which brief it was
+  // made for, so no guess is involved — the brief is only marked fulfilled when
+  // something explicitly claimed it.
+  if (asset.briefId) {
+    await prisma.contentBrief.update({
+      where: { id: asset.briefId },
+      data: { postId: post.id, status: BriefStatus.FULFILLED },
+    });
+  }
 
   await recordActivity({
     action: activityActions.postCreated,
