@@ -3,7 +3,7 @@
 Resume point for a fresh session. Read this plus `docs/DECISIONS.md` and the
 diff; the conversation is not needed.
 
-**Last updated:** 2026-09-10 — intelligence programme phase 3 (strategy engine)
+**Last updated:** 2026-09-10 — intelligence programme phase 4 (content director)
 
 ---
 
@@ -34,9 +34,9 @@ of the build phases above.
 | 1 | Foundation: workspace, brand, objectives, audiences | done — `90f4dbe` |
 | 1a | Account vs global/external evidence separation | done — `90f4dbe` |
 | 2 | AI orchestration boundary | done — `abaf924` |
-| 3 | Strategy engine | **done — this pass** |
-| 4 | Content director | next |
-| 5 | Asset ingestion + analysis | not started |
+| 3 | Strategy engine | done — `33dc642` |
+| 4 | Content director | **done — this pass** |
+| 5 | Asset ingestion + analysis | next |
 | 6 | Creative variants | not started |
 | 7 | Rendering | not started |
 | 8 | Distribution | not started |
@@ -111,6 +111,41 @@ behind it with the weight that decision was actually made from.
 confidence and prior-only, because nothing has been published for real. That is
 the correct answer for this account's actual state, not a limitation of the
 engine — it changes on its own once real results arrive.
+
+---
+
+## Intelligence phase 4: the content director
+
+**One line:** the active strategy now becomes a window of concrete briefs, each
+carrying the strategy decision it serves, so a published post traces back through
+the plan to the evidence that argued for it.
+
+- `ContentPlan` implements exactly one `StrategyVersion` (required FK,
+  `onDelete: Restrict`). A later strategy never becomes an existing plan's
+  strategy.
+- `ContentBrief` is one planned piece: pillar, format, hook family, angle, key
+  message, length range, objective KPI, planned time, platforms, production
+  notes, and `strategyBasis` — the decision it serves.
+- Every strategy hypothesis that content can test becomes an experiment brief
+  with its `hypothesisIndex`. A hypothesis nobody makes content for never gets
+  tested, and the plan is where that either happens or visibly does not.
+- `refine` rejects: pillars/KPIs/formats/hook families the project or strategy
+  does not have; an experiment brief that will not say what it tests; an angle
+  that only restates its own `strategyBasis`; duplicate briefs.
+- Scheduling uses the project's real schedule slots where it has them. Where it
+  does not, it spreads evenly at a fixed neutral hour and records
+  `cadenceSource` — it does not ship a "best time to post" table, because that
+  would be a global prior dressed as an account-specific recommendation.
+- `planAdherence()` reports planned mix against delivered mix. Delivered counts
+  only briefs a post was actually made from; intent is not delivery.
+- Skipped briefs are kept with a required reason.
+- `/plan` shows the window, the planned-vs-delivered mix per format, pillar and
+  hook family, each brief with the decision it serves, and the plan history.
+
+**What is not proven:** with no API key the deterministic planner can only rotate
+the strategy's choices across pillars and formats. It says so — in each brief's
+angle text and in the plan's `gaps` — rather than presenting a rotation as an
+idea. Real creative angles need the model, which needs a key.
 
 ---
 
@@ -254,7 +289,7 @@ live-gate proof       2 jobs BLOCKED at PREFLIGHT with live mode on
 ## Where things are
 
 ```
-prisma/schema.prisma      35 models, 34 enums
+prisma/schema.prisma      37 models, 37 enums
 src/server/platforms/
   types.ts                capability model, AdapterFailure, PublicationEvidence
   dom.ts                  candidate resolution + drift diagnostics
@@ -274,6 +309,9 @@ src/server/knowledge/     global priors / external providers; cannot write
 src/server/strategy/
   context.ts              everything the engine may reason from
   engine.ts               immutable versions + per-decision evidence links
+src/server/content-director/
+  context.ts              the plan window, cadence source, active strategy
+  director.ts             plans, briefs, fulfilment, planned-vs-delivered
 src/server/ai/orchestration/
   run.ts                  runAiOperation — THE boundary
   registry.ts             versioned prompts + hashes
@@ -282,22 +320,23 @@ src/server/ai/orchestration/
   accounting.ts           spend and latency, read from AIUsageLog
   status.ts               what the boundary is doing, for diagnostics
   providers/              deterministic · anthropic (inactive without a key)
-  prompts/                asset-analysis · copy-variants · strategy-draft
+  prompts/                asset-analysis · copy-variants · strategy-draft ·
+                          content-plan
 worker/index.ts           6 queues, sweeper, heartbeat, reconciliation
 tests/                    unit · pipeline · live-publishing · publishing-gates ·
                           queue-reschedule (Redis-backed) ·
                           evidence-weighting · ai-orchestration ·
-                          strategy-engine
+                          strategy-engine · content-director
 ```
 
 ---
 
 ## Next concrete actions
 
-1. **Intelligence phase 4: the content director.** Turn the active strategy into
-   a concrete plan — which pillar, which format, which hook family, on which day
-   — and carry the strategy version forward onto every item it produces so a
-   published post can be traced back to the plan that asked for it.
+1. **Intelligence phase 5: asset ingestion and analysis.** Route asset analysis
+   through `runAiOperation` and the registered `asset-analysis` prompt instead of
+   calling the heuristic provider directly, and attach an asset to the brief it
+   fulfils so production has a queue rather than a folder.
 2. **Publish one real TikTok post.** Blocked only on a test account and a human
    sign-in. Everything else is in place.
 3. **Fix whatever selectors the live run breaks.** Expected.
@@ -396,3 +435,11 @@ types or tests.
 16. **MSYS path mangling** rewrote a `/strategy` argument into
     `C:/Program Files/Git/strategy` when passed to a script from Git Bash. Use
     `MSYS_NO_PATHCONV=1` for any argument that is a URL path.
+
+### Intelligence phase 4
+
+17. **A schema minimum fired before the rule it was meant to test.** A brief's
+    `strategyBasis` of `"hypotheses.0"` is 12 characters, and copying it into
+    `angle` failed the 20-character floor before the "angle must not restate its
+    basis" check ran. Correct ordering — structure before semantics — but the
+    test had to pick a longer basis to reach the rule it was asserting on.

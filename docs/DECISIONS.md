@@ -486,3 +486,76 @@ picture the strategy was never written from.
 
 **Consequences.** More rows, and a history screen to read them. Activation is a
 transaction so two concurrent activations cannot both end ACTIVE.
+
+---
+
+## 2026-09-10 · A plan implements exactly one strategy version
+
+**Context.** Strategies are versioned and superseded. A plan built while v1 was
+active, read after v3 exists, would otherwise appear to implement v3 — and its
+briefs would look like they were derived from decisions nobody had made yet.
+
+**Decision.** `ContentPlan.strategyVersionId` is a required FK with
+`onDelete: Restrict`, set once when the plan is created. A later strategy never
+becomes an existing plan's strategy.
+
+**Rationale.** The plan is the record of what was asked for, on the basis that
+existed then. Re-pointing it at a newer strategy would make the record lie in the
+most convincing possible way.
+
+**Consequences.** Replanning after a strategy change is an explicit act, and the
+old plan stays readable next to the strategy it actually came from.
+
+---
+
+## 2026-09-10 · A brief must say what happens, not restate the strategy
+
+**Context.** The obvious failure mode of a planning layer is a plan made of
+strategy paraphrase: forty rows saying "numeric hook, screen recording, proof
+pillar". It looks like a plan and cannot be produced from.
+
+**Decision.** `angle` has a 20-character floor and `refine` rejects a brief whose
+angle normalises to its own `strategyBasis`. The deterministic implementation,
+which genuinely can only rotate the strategy's choices, says so in the brief text
+and in the plan's `gaps` rather than pretending otherwise.
+
+**Rationale.** A rule-based planner cannot invent a specific idea, and dressing a
+rotation up as one would be exactly the kind of quiet overclaim the rest of this
+system is built to avoid. Saying "this is a rotation slot; a person supplies what
+is on screen" is more useful than a fabricated angle.
+
+**Consequences.** With no API key the plan is a scaffold with honest labels
+rather than a finished creative brief. That is the true state of things.
+
+---
+
+## 2026-09-10 · Placeholder posting times are labelled, not recommended
+
+**Context.** Every brief needs a time. The system does not know a good time to
+post for any of these accounts, because nothing has been published for real.
+
+**Decision.** `planSlots()` uses the project's own schedule slots where they
+exist. Where they do not, it spreads evenly at a fixed neutral hour, and
+`ContentPlan.rationale.cadenceSource` records which of the two was used.
+
+**Alternatives.** Shipping a "best times to post" table from general knowledge.
+
+**Rationale.** A per-platform best-time table would be a global prior wearing the
+costume of an account-specific recommendation — the exact conflation the evidence
+model exists to prevent. An obvious placeholder invites the operator to set a real
+time; a confident wrong one does not.
+
+---
+
+## 2026-09-10 · Skipped briefs are kept, with the reason
+
+**Context.** Plans are not fully executed. The tempting cleanup is to delete what
+was not made.
+
+**Decision.** `BriefStatus.SKIPPED` with a required `skipReason` — the server
+action refuses an empty one. `planAdherence()` reports planned mix against
+delivered mix, where delivered counts only briefs a post was actually made from.
+
+**Rationale.** "We planned six screen recordings and made one, because nobody had
+the footage" is a finding about the operation. Deleting the five destroys it, and
+counting them as delivered would be worse.

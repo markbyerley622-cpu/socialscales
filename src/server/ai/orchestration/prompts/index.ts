@@ -11,3 +11,5 @@ export { copyVariantsPrompt } from "./copy-variants";
 export type { CopyVariant, CopyVariantsInput, CopyVariantsOutput } from "./copy-variants";
 export { strategyDraftPrompt, strategyDraftSchema } from "./strategy-draft";
 export type { StrategyDraftInput, StrategyDraftOutput } from "./strategy-draft";
+export { contentPlanPrompt, contentPlanSchema } from "./content-plan";
+export type { ContentPlanInput, ContentPlanOutput, PlannedBrief } from "./content-plan";

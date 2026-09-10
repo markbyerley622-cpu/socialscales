@@ -304,3 +304,57 @@ A brand with nothing published gets a real strategy built from priors, marked
 `priorOnly` per decision, capped at LOW confidence, and carrying a risk that says
 so in the first line. `accountState` is snapshotted onto the version, so a later
 reader sees what it was planning from rather than what is true then.
+
+---
+
+## The content director
+
+A strategy says what to do. A plan says what will be published.
+
+```
+StrategyVersion (ACTIVE)
+      |
+      v
+buildPlanContext ── window (days, slots, cadenceSource) ── pillars ── objectives
+      |
+      v
+runAiOperation(content-plan)
+      |
+      v
+ContentPlan v_n ──< ContentBrief (sequence, angle, strategyBasis, plannedFor)
+      |                    |
+      |                    +── postId ──> Post ──> PostPlatform ──> AnalyticsSnapshot
+      v
+supersedes ContentPlan v_(n-1)
+```
+
+`ContentPlan.strategyVersionId` is required and immutable, so a plan implements
+exactly one strategy. Together with `ContentBrief.strategyBasis` and
+`ContentBrief.postId`, that is the full chain: a published post → the brief that
+asked for it → the strategy decision it served → the evidence behind that
+decision.
+
+### What a brief must be
+
+| Field | Rule |
+|---|---|
+| `angle` | What actually happens on screen. Rejected if it restates `strategyBasis` |
+| `strategyBasis` | The decision it serves, e.g. `hookFamilies: numeric` or `hypotheses.2` |
+| `pillarSlug`, `objectiveKpi`, `format`, `hookFamily` | Must exist on this project or its strategy |
+| `hypothesisIndex` | Required when `isExperiment` — a test must say what it tests |
+| `plannedFor` | From the project's schedule slots, or an evenly-spread placeholder |
+
+### Planned against delivered
+
+`planAdherence()` returns both mixes. Delivered counts only briefs a post was
+made from, so a plan that intended half screen recordings and delivered one in
+nine is legible rather than lost. Skipped briefs are kept with their reason; the
+record of what was *not* made is part of the record.
+
+### Cadence
+
+`ContentPlan.rationale.cadenceSource` says whether the window came from the
+project's own schedule slots or from the strategy's cadence guess. The system
+ships no "best time to post" table: that would be a global prior wearing the
+costume of an account-specific recommendation, which is the conflation the
+evidence model exists to prevent.

@@ -13,6 +13,11 @@ import { refreshRecommendations } from "@/server/learning/recommendations";
 import { refreshTrends } from "@/server/learning/trends";
 import { activateStrategy, generateStrategy } from "@/server/strategy";
 import {
+  createContentPlan,
+  NoActiveStrategyError,
+  skipBrief,
+} from "@/server/content-director";
+import {
   Platform,
   PublishPolicy,
   RecommendationStatus,
@@ -420,5 +425,61 @@ export async function activateStrategyAction(formData: FormData): Promise<Action
     return { ok: true, message: "Strategy activated. The previous one is kept as superseded." };
   } catch (error) {
     return fail(error, "Could not activate the strategy");
+  }
+}
+
+export async function createPlanAction(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const projectId = String(formData.get("projectId") ?? "");
+    if (!projectId) return { ok: false, message: "Pick a project first." };
+    const days = Number.parseInt(String(formData.get("days") ?? "14"), 10);
+
+    const project = await prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { workspaceId: true },
+    });
+
+    const result = await createContentPlan({
+      workspaceId: project.workspaceId,
+      projectId,
+      days: Number.isFinite(days) && days > 0 ? Math.min(90, days) : 14,
+      activate: true,
+    });
+
+    revalidatePath("/plan");
+    revalidatePath("/calendar");
+
+    if (!result.ok) {
+      return { ok: false, message: `Plan rejected (${result.errorKind}): ${result.reason}` };
+    }
+    return {
+      ok: true,
+      message: `Plan v${result.version} is active with ${result.briefs} briefs.`,
+    };
+  } catch (error) {
+    if (error instanceof NoActiveStrategyError) {
+      return { ok: false, message: error.message };
+    }
+    return fail(error, "Could not build a plan");
+  }
+}
+
+export async function skipBriefAction(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const briefId = String(formData.get("briefId") ?? "");
+    const reason = String(formData.get("reason") ?? "").trim();
+    if (!briefId) return { ok: false, message: "Missing brief." };
+    if (!reason) {
+      // A skipped brief with no reason is a hole in the record; the whole point
+      // of keeping it is knowing why it was not made.
+      return { ok: false, message: "Say why it is being skipped — the reason is kept." };
+    }
+    await skipBrief({ briefId, reason });
+    revalidatePath("/plan");
+    return { ok: true, message: "Skipped. The brief and the reason are kept." };
+  } catch (error) {
+    return fail(error, "Could not skip the brief");
   }
 }

@@ -387,6 +387,8 @@ model Project {
   recommendations Recommendation[]
   activity        ActivityLog[]
   aiJobs          AIJob[]
+  plans           ContentPlan[]
+  briefs          ContentBrief[]
 
   @@index([workspaceId])
 }
@@ -468,6 +470,7 @@ model AudienceSegment {
 
   project    Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   strategies StrategyVersion[]
+  briefs     ContentBrief[]
 
   @@index([projectId])
 }
@@ -656,6 +659,7 @@ model Post {
   experiment Experiment?    @relation(fields: [experimentId], references: [id], onDelete: SetNull)
   approvedBy User?          @relation("PostApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   targets    PostPlatform[]
+  brief      ContentBrief?
 
   @@index([projectId, status])
   @@index([scheduledFor])
@@ -1093,6 +1097,7 @@ model StrategyVersion {
   project        Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
   targetAudience AudienceSegment?   @relation(fields: [targetAudienceId], references: [id], onDelete: SetNull)
   evidence       StrategyEvidence[]
+  plans          ContentPlan[]
 
   @@unique([projectId, version])
   @@index([projectId, status])
@@ -1261,4 +1266,131 @@ model AIUsageLog {
 
   @@unique([aiJobId, attempt])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Content director (Phase 4)
+//
+// A strategy says what this brand should do. A plan says what it will publish,
+// and each brief is one concrete piece with the strategy decision it serves
+// written on it — so a published post can be traced back to the plan that asked
+// for it, and the plan back to the evidence that argued for it.
+// ---------------------------------------------------------------------------
+
+enum ContentPlanStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum BriefStatus {
+  /// Planned, nothing made yet.
+  PLANNED
+  /// An asset exists and is being worked on.
+  IN_PRODUCTION
+  /// An asset and a variant exist; the post can be created.
+  READY
+  /// A Post was created from this brief.
+  FULFILLED
+  /// Deliberately not made. The reason is kept.
+  SKIPPED
+}
+
+/// One planning horizon for a project, derived from exactly one strategy version.
+model ContentPlan {
+  id                String            @id @default(cuid())
+  projectId         String
+  /// The strategy this plan implements. A plan never spans two strategies.
+  strategyVersionId String
+  version           Int
+  status            ContentPlanStatus @default(DRAFT)
+
+  /// Local dates the plan covers, inclusive of the start.
+  startsOn DateTime
+  endsOn   DateTime
+  timezone String   @default("UTC")
+
+  summary   String
+  /// The pillar/format/hook mix the plan is aiming for, as planned rather than
+  /// as achieved. Comparing the two later is how drift becomes visible.
+  targetMix Json   @default("{}")
+  /// Why the plan looks like this — cadence source, coverage gaps, tradeoffs.
+  rationale Json   @default("{}")
+
+  generatedBy   String
+  model         String?
+  promptVersion String?
+
+  supersededById String?      @unique
+  supersededBy   ContentPlan? @relation("PlanSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     ContentPlan? @relation("PlanSupersession")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  strategy StrategyVersion @relation(fields: [strategyVersionId], references: [id], onDelete: Restrict)
+  briefs   ContentBrief[]
+
+  @@unique([projectId, version])
+  @@index([projectId, status])
+  @@index([strategyVersionId])
+}
+
+/// One planned piece of content.
+model ContentBrief {
+  id        String      @id @default(cuid())
+  planId    String
+  projectId String
+  /// Stable 1-based position within its plan.
+  sequence  Int
+  status    BriefStatus @default(PLANNED)
+
+  workingTitle String
+  /// The specific idea, not the category. "Show the import failing on a real CSV".
+  angle        String
+  /// What a viewer should be left with.
+  keyMessage   String
+
+  pillarSlug String?
+  format     ContentFormat @default(UNKNOWN)
+  hookFamily String?
+  /// Suggested length range, in seconds. Null where the plan has no opinion.
+  minSeconds Int?
+  maxSeconds Int?
+
+  targetAudienceId String?
+  /// The KPI this piece is meant to move. Must be one the project tracks.
+  objectiveKpi     String?
+
+  /// Local date/time this is planned for, from the project's schedule slots
+  /// where it has them and from the strategy's cadence where it does not.
+  plannedFor DateTime?
+  platforms  Platform[] @default([])
+
+  /// How to make it. Written for a person, not a model.
+  productionNotes String?
+  /// Which strategy decision this brief serves, e.g. "hookFamilies: numeric".
+  strategyBasis   String
+  /// True when this exists to test a hypothesis rather than to perform.
+  isExperiment    Boolean @default(false)
+  /// Index into the strategy version's `hypotheses` array, when testing one.
+  hypothesisIndex Int?
+
+  /// Set when a Post is created from this brief. Unique: one brief, one post.
+  postId     String? @unique
+  skipReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plan           ContentPlan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targetAudience AudienceSegment? @relation(fields: [targetAudienceId], references: [id], onDelete: SetNull)
+  post           Post?            @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@unique([planId, sequence])
+  @@index([projectId, status])
+  @@index([plannedFor])
 }
