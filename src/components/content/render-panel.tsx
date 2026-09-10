@@ -4,8 +4,8 @@ import { Ban, Clapperboard, Film, RotateCcw, TriangleAlert } from "lucide-react"
 import { cancelRenderAction, renderVariantAction } from "@/app/actions/posts";
 import { ActionForm } from "@/components/ui/action-form";
 import { SubmitButton } from "@/components/ui/button";
-import { Badge, SectionLabel } from "@/components/ui/primitives";
-import type { BadgeTone } from "@/components/ui/primitives";
+import { Badge, SectionLabel } from "@/components/ui/ops-primitives";
+import type { BadgeTone } from "@/components/ui/ops-primitives";
 import { bytes, duration } from "@/lib/utils";
 
 /**

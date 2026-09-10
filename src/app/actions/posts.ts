@@ -207,8 +207,8 @@ export async function analyzeAssetAction(formData: FormData): Promise<ActionResu
     if (!assetId) return { ok: false, message: "Missing asset." };
 
     const result = await analyzeAsset({ assetId, userId: user.id, variantCount: 3 });
-    revalidatePath("/content");
-    revalidatePath(`/content/${assetId}`);
+    revalidatePath("/ops/content");
+    revalidatePath(`/ops/content/${assetId}`);
     return {
       ok: true,
       message: `Analysed as ${result.format.toLowerCase().replace(/_/g, " ")} with ${result.variantIds.length} new copy variants.`,
@@ -260,7 +260,7 @@ export async function createVariantAction(formData: FormData): Promise<ActionRes
       hashtags: parseHashtags(parsed.data.hashtags),
     });
 
-    revalidatePath(`/content/${assetId}`);
+    revalidatePath(`/ops/content/${assetId}`);
     return { ok: true, message: "Variant added and scored." };
   } catch (error) {
     return fail(error, "Could not add the variant");
@@ -292,7 +292,7 @@ export async function updateVariantAction(formData: FormData): Promise<ActionRes
       hashtags: parseHashtags(parsed.data.hashtags),
     });
 
-    if (assetId) revalidatePath(`/content/${assetId}`);
+    if (assetId) revalidatePath(`/ops/content/${assetId}`);
     return { ok: true, message: "Saved and re-scored." };
   } catch (error) {
     return fail(error, "Could not save the variant");
@@ -324,14 +324,14 @@ export async function attachAssetToBriefAction(
 
     if (!briefId) {
       await detachAssetFromBrief(assetId);
-      revalidatePath(`/content/${assetId}`);
-      revalidatePath("/plan");
+      revalidatePath(`/ops/content/${assetId}`);
+      revalidatePath("/ops/plan");
       return { ok: true, message: "Unlinked from its brief." };
     }
 
     await attachAssetToBrief({ assetId, briefId });
-    revalidatePath(`/content/${assetId}`);
-    revalidatePath("/plan");
+    revalidatePath(`/ops/content/${assetId}`);
+    revalidatePath("/ops/plan");
     return {
       ok: true,
       message: "Linked. The brief now shows as in production, and publishing it will fulfil the brief.",
@@ -352,7 +352,7 @@ export async function writeTreatmentAction(formData: FormData): Promise<ActionRe
       select: { assetId: true },
     });
     const result = await writeTreatment({ variantId });
-    revalidatePath(`/content/${variant.assetId}`);
+    revalidatePath(`/ops/content/${variant.assetId}`);
 
     if (!result.ok) {
       return { ok: false, message: `Treatment rejected (${result.errorKind}): ${result.reason}` };
@@ -381,8 +381,8 @@ export async function renderVariantAction(formData: FormData): Promise<ActionRes
     });
 
     const result = await enqueueRender({ variantId, force });
-    revalidatePath(`/content/${variant.assetId}`);
-    revalidatePath("/renders");
+    revalidatePath(`/ops/content/${variant.assetId}`);
+    revalidatePath("/ops/renders");
 
     if (!result.queued && result.status !== "SUCCEEDED") {
       // The row exists either way, so the sweeper will pick it up once Redis is
@@ -415,7 +415,7 @@ export async function cancelRenderAction(formData: FormData): Promise<ActionResu
     const renderJobId = String(formData.get("renderJobId") ?? "");
     if (!renderJobId) return { ok: false, message: "Missing render job." };
     await cancelRender(renderJobId);
-    revalidatePath("/renders");
+    revalidatePath("/ops/renders");
     return { ok: true, message: "Cancelled. A running encode stops at its next clip." };
   } catch (error) {
     return fail(error, "Could not cancel the render");

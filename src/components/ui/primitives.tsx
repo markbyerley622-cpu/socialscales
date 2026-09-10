@@ -1,223 +1,77 @@
-import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
-
 /**
- * The console's shared surfaces and text shapes. Deliberately small: a handful of
- * composable pieces rather than a component per screen.
+ * Social Scales UI primitives.
+ *
+ * One card system, one button system, one badge system. Everything else in the
+ * app composes from here so radii, borders and spacing stay consistent.
  */
 
-export function Card({
+import * as React from "react";
+import Link from "next/link";
+
+import { cn } from "@/lib/utils";
+
+/* -------------------------------------------------------------------------- */
+/* Panel + Card                                                               */
+/* -------------------------------------------------------------------------- */
+
+export function Panel({
   className,
   children,
-}: {
-  className?: string;
-  children: ReactNode;
-}) {
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <section
       className={cn(
-        "rounded-[10px] border border-hairline bg-surface",
-        "shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_8px_24px_-16px_rgba(0,0,0,0.7)]",
+        "rounded-[var(--radius-panel)] border border-hairline bg-surface/80 backdrop-blur-[2px]",
         className,
       )}
+      {...props}
     >
       {children}
     </section>
   );
 }
 
-export function CardHeader({
+export function PanelHeader({
+  eyebrow,
   title,
-  subtitle,
+  description,
   action,
   className,
 }: {
-  title: ReactNode;
-  subtitle?: ReactNode;
-  action?: ReactNode;
+  eyebrow?: string;
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  action?: React.ReactNode;
   className?: string;
 }) {
   return (
-    <header
-      className={cn(
-        "flex items-start justify-between gap-4 border-b border-hairline px-4 py-3",
-        className,
-      )}
-    >
+    <header className={cn("flex flex-wrap items-start justify-between gap-3 px-5 pt-4 pb-3", className)}>
       <div className="min-w-0">
-        <h2 className="text-[13px] font-semibold tracking-tight text-ink">{title}</h2>
-        {subtitle ? (
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-muted">{subtitle}</p>
-        ) : null}
+        {eyebrow ? <p className="ss-eyebrow">{eyebrow}</p> : null}
+        {title ? <h2 className="mt-1 text-[15px] font-semibold text-ink">{title}</h2> : null}
+        {description ? <p className="mt-1 text-[13px] text-ink-muted">{description}</p> : null}
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {/* Must be allowed to shrink: some actions hold a scrollable tab strip. */}
+      {action ? <div className="flex min-w-0 max-w-full items-center gap-2">{action}</div> : null}
     </header>
   );
 }
 
-export function SectionLabel({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <p
-      className={cn(
-        "text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-muted",
-        className,
-      )}
-    >
-      {children}
-    </p>
-  );
+export function PanelBody({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <div className={cn("px-5 pb-5", className)}>{children}</div>;
 }
 
-// ---------------------------------------------------------------------------
-// Badges
-// ---------------------------------------------------------------------------
-
-export type BadgeTone =
-  | "neutral"
-  | "accent"
-  | "good"
-  | "warning"
-  | "serious"
-  | "critical"
-  | "info";
-
-const BADGE_TONES: Record<BadgeTone, string> = {
-  neutral: "border-hairline-strong bg-surface-raised text-ink-secondary",
-  accent: "border-accent/35 bg-accent/12 text-accent-ink",
-  good: "border-good/40 bg-good/12 text-[#4cc94c]",
-  warning: "border-warning/40 bg-warning/12 text-[#f6c455]",
-  serious: "border-serious/40 bg-serious/12 text-[#f0a180]",
-  critical: "border-critical/45 bg-critical/14 text-[#ec7d7d]",
-  info: "border-above/40 bg-above/12 text-[#6ea9ee]",
-};
-
-export function Badge({
-  tone = "neutral",
-  icon,
-  children,
-  className,
-  title,
-}: {
-  tone?: BadgeTone;
-  /** Status badges must carry an icon: colour never carries meaning alone. */
-  icon?: ReactNode;
-  children: ReactNode;
-  className?: string;
-  title?: string;
-}) {
-  return (
-    <span
-      title={title}
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-[3px]",
-        "text-[10.5px] font-medium leading-none whitespace-nowrap",
-        BADGE_TONES[tone],
-        className,
-      )}
-    >
-      {icon ? <span className="shrink-0 [&>svg]:size-3">{icon}</span> : null}
-      {children}
-    </span>
-  );
-}
-
-/** A small coloured dot used to carry project identity next to its name. */
-export function ProjectDot({
-  color,
-  className,
-}: {
-  color: string;
-  className?: string;
-}) {
-  return (
-    <span
-      aria-hidden
-      className={cn("size-2 shrink-0 rounded-full", className)}
-      style={{ background: color, boxShadow: `0 0 0 3px ${color}22` }}
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Empty and error states
-// ---------------------------------------------------------------------------
-
-export function EmptyState({
-  icon,
-  title,
-  body,
-  action,
-  className,
-}: {
-  icon?: ReactNode;
-  title: string;
-  body: string;
-  action?: ReactNode;
-  className?: string;
-}) {
+export function Card({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 px-6 py-12 text-center",
+        "rounded-[var(--radius-card)] border border-hairline bg-surface-2/70 p-4",
         className,
       )}
+      {...props}
     >
-      {icon ? (
-        <div className="mb-1 grid size-9 place-items-center rounded-full border border-hairline bg-surface-raised text-ink-muted [&>svg]:size-4">
-          {icon}
-        </div>
-      ) : null}
-      <p className="text-[13px] font-medium text-ink">{title}</p>
-      <p className="max-w-[46ch] text-[11.5px] leading-relaxed text-ink-muted">{body}</p>
-      {action ? <div className="mt-2">{action}</div> : null}
-    </div>
-  );
-}
-
-/**
- * Used wherever a number would be misleading without its caveat — the "needs more
- * data" state that the spec asks for instead of a fabricated score.
- */
-export function InsufficientData({
-  needed,
-  have,
-  what,
-}: {
-  needed: number;
-  have: number;
-  what: string;
-}) {
-  return (
-    <p className="text-[11.5px] leading-relaxed text-ink-muted">
-      Not enough data yet: {have} of {needed} {what} needed before this is
-      reported as a finding rather than noise.
-    </p>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Data display
-// ---------------------------------------------------------------------------
-
-export function KeyValue({
-  label,
-  children,
-  className,
-}: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={cn("flex min-w-0 flex-col gap-1", className)}>
-      <SectionLabel>{label}</SectionLabel>
-      <div className="text-[12.5px] leading-relaxed text-ink">{children}</div>
+      {children}
     </div>
   );
 }
@@ -226,32 +80,307 @@ export function Divider({ className }: { className?: string }) {
   return <div className={cn("h-px w-full bg-hairline", className)} />;
 }
 
-/**
- * A thin horizontal meter. Used for scorecards, where the number is a writing
- * heuristic rather than a prediction — so the label says so.
- */
-export function Meter({
-  value,
-  max = 10,
-  tone = "accent",
-}: {
-  value: number;
-  max?: number;
-  tone?: "accent" | "above" | "below";
-}) {
-  const fraction = Math.max(0, Math.min(1, value / max));
-  const color =
-    tone === "above"
-      ? "var(--color-above)"
-      : tone === "below"
-        ? "var(--color-below)"
-        : "var(--color-accent)";
+/* -------------------------------------------------------------------------- */
+/* Button                                                                     */
+/* -------------------------------------------------------------------------- */
+
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+type ButtonSize = "sm" | "md" | "lg";
+
+const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
+  primary:
+    "bg-accent text-[#04121a] font-semibold hover:bg-accent-soft shadow-[0_0_0_1px_rgba(34,211,238,0.35),0_8px_24px_-12px_rgba(34,211,238,0.7)]",
+  secondary: "bg-surface-3 text-ink border border-hairline-strong hover:border-accent/40 hover:text-white",
+  ghost: "text-ink-muted hover:text-ink hover:bg-white/5",
+  danger: "bg-danger/15 text-danger border border-danger/30 hover:bg-danger/22",
+};
+
+const BUTTON_SIZES: Record<ButtonSize, string> = {
+  sm: "h-8 px-3 text-[12px] gap-1.5",
+  md: "h-9 px-4 text-[13px] gap-2",
+  lg: "h-11 px-5 text-[14px] gap-2",
+};
+
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+}
+
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { className, variant = "secondary", size = "md", type = "button", ...props },
+  ref,
+) {
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-hover">
-      <div
-        className="h-full rounded-full transition-[width] duration-500"
-        style={{ width: `${fraction * 100}%`, background: color }}
-      />
+    <button
+      ref={ref}
+      type={type}
+      className={cn(
+        "inline-flex items-center justify-center rounded-[var(--radius-control)] whitespace-nowrap transition-colors",
+        "disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-inherit",
+        BUTTON_SIZES[size],
+        BUTTON_VARIANTS[variant],
+        className,
+      )}
+      {...props}
+    />
+  );
+});
+
+/**
+ * Navigation that should look like a button. Kept separate from `Button` so we
+ * never nest an anchor inside a button element.
+ */
+export function LinkButton({
+  href,
+  variant = "secondary",
+  size = "md",
+  className,
+  children,
+  ...props
+}: {
+  href: string;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  className?: string;
+  children: React.ReactNode;
+} & Omit<React.ComponentProps<typeof Link>, "href" | "className" | "children">) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center justify-center rounded-[var(--radius-control)] whitespace-nowrap transition-colors",
+        BUTTON_SIZES[size],
+        BUTTON_VARIANTS[variant],
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </Link>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Badges                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export function Badge({
+  className,
+  children,
+  dot,
+}: {
+  className?: string;
+  children: React.ReactNode;
+  dot?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[11px] font-medium whitespace-nowrap",
+        className,
+      )}
+    >
+      {dot ? <span className={cn("size-1.5 rounded-full", dot)} /> : null}
+      {children}
+    </span>
+  );
+}
+
+export function DemoDataBadge({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border border-warn/30 bg-warn/10 px-2.5 py-[3px] text-[11px] font-medium text-warn",
+        className,
+      )}
+      title="Values on this screen come from the local development fixture set, not from a live account."
+    >
+      <span className="size-1.5 rounded-full bg-warn" />
+      Demo dataset
+    </span>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Form controls                                                              */
+/* -------------------------------------------------------------------------- */
+
+const FIELD_BASE =
+  "w-full rounded-[var(--radius-control)] border border-hairline-strong bg-surface-3/60 px-3 text-[13px] text-ink placeholder:text-ink-faint transition-colors focus:border-accent/60 focus:bg-surface-3 disabled:opacity-50";
+
+export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  function Input({ className, ...props }, ref) {
+    return <input ref={ref} className={cn(FIELD_BASE, "h-10", className)} {...props} />;
+  },
+);
+
+export const Textarea = React.forwardRef<
+  HTMLTextAreaElement,
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>
+>(function Textarea({ className, ...props }, ref) {
+  return <textarea ref={ref} className={cn(FIELD_BASE, "py-2.5 leading-relaxed", className)} {...props} />;
+});
+
+export const Select = React.forwardRef<
+  HTMLSelectElement,
+  React.SelectHTMLAttributes<HTMLSelectElement>
+>(function Select({ className, children, ...props }, ref) {
+  return (
+    <select ref={ref} className={cn(FIELD_BASE, "h-10 appearance-none pr-8", className)} {...props}>
+      {children}
+    </select>
+  );
+});
+
+export function Field({
+  label,
+  hint,
+  required,
+  counter,
+  children,
+  className,
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+  counter?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={cn("block", className)}>
+      <span className="mb-1.5 flex items-baseline justify-between gap-2">
+        <span className="text-[13px] font-medium text-ink">
+          {label}
+          {required ? <span className="ml-1 text-accent">*</span> : null}
+        </span>
+        {counter ? <span className="text-[11px] text-ink-faint">{counter}</span> : null}
+      </span>
+      {children}
+      {hint ? <span className="mt-1.5 block text-[11px] text-ink-faint">{hint}</span> : null}
+    </label>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Progress                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export function Progress({
+  value,
+  className,
+  barClassName,
+  indeterminate,
+}: {
+  value?: number;
+  className?: string;
+  barClassName?: string;
+  indeterminate?: boolean;
+}) {
+  return (
+    <div
+      className={cn("relative h-1.5 w-full overflow-hidden rounded-full bg-white/8", className, indeterminate && "ss-indeterminate")}
+      role="progressbar"
+      aria-valuenow={indeterminate ? undefined : value}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      {indeterminate ? null : (
+        <div
+          className={cn("h-full rounded-full bg-accent transition-[width] duration-500", barClassName)}
+          style={{ width: `${Math.max(0, Math.min(100, value ?? 0))}%` }}
+        />
+      )}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* States                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+  className,
+}: {
+  icon?: React.ReactNode;
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center rounded-[var(--radius-card)] border border-dashed border-hairline-strong bg-surface-2/40 px-6 py-10 text-center",
+        className,
+      )}
+    >
+      {icon ? <div className="mb-3 text-ink-faint">{icon}</div> : null}
+      <p className="text-[14px] font-medium text-ink">{title}</p>
+      {description ? <p className="mt-1.5 max-w-sm text-[13px] text-ink-muted">{description}</p> : null}
+      {action ? <div className="mt-4">{action}</div> : null}
+    </div>
+  );
+}
+
+export function ErrorState({
+  title,
+  detail,
+  action,
+}: {
+  title: string;
+  detail?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-[var(--radius-card)] border border-danger/30 bg-danger/8 px-5 py-6">
+      <p className="text-[14px] font-semibold text-danger">{title}</p>
+      {detail ? <p className="mt-1.5 text-[13px] text-ink-muted">{detail}</p> : null}
+      {action ? <div className="mt-4">{action}</div> : null}
+    </div>
+  );
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return <div className={cn("animate-pulse rounded-[var(--radius-control)] bg-white/6", className)} />;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Misc                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export function Avatar({ initials, className }: { initials: string; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10 text-[12px] font-semibold tracking-wide text-accent",
+        className,
+      )}
+    >
+      {initials}
+    </span>
+  );
+}
+
+export function DeltaPill({ value }: { value: number | null }) {
+  if (value === null) {
+    return <span className="text-[11px] text-ink-faint">No baseline yet</span>;
+  }
+  const positive = value >= 0;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[11px] font-medium",
+        positive ? "text-ok" : "text-danger",
+      )}
+    >
+      <span aria-hidden>{positive ? "▲" : "▼"}</span>
+      {positive ? "+" : ""}
+      {value}%
+    </span>
   );
 }

@@ -55,8 +55,8 @@ export async function retryJobAction(formData: FormData): Promise<ActionResult> 
     if (!jobId) return { ok: false, message: "Missing job." };
 
     await retryPublishJob(jobId, user.id);
-    revalidatePath("/queue");
-    revalidatePath("/");
+    revalidatePath("/ops/queue");
+    revalidatePath("/ops");
     return { ok: true, message: "Re-queued. The worker will pick it up." };
   } catch (error) {
     return fail(error, "Could not retry the job");
@@ -74,8 +74,8 @@ export async function runJobNowAction(formData: FormData): Promise<ActionResult>
     if (!jobId) return { ok: false, message: "Missing job." };
 
     const result = await runPublishJob(jobId);
-    revalidatePath("/queue");
-    revalidatePath("/");
+    revalidatePath("/ops/queue");
+    revalidatePath("/ops");
 
     switch (result.outcome) {
       case "published":
@@ -113,7 +113,7 @@ export async function sweepJobsAction(): Promise<ActionResult> {
   try {
     await requireUser();
     const requeued = await sweepDueJobs();
-    revalidatePath("/queue");
+    revalidatePath("/ops/queue");
     return {
       ok: true,
       message:
@@ -163,7 +163,7 @@ export async function addAccountAction(formData: FormData): Promise<ActionResult
       },
     });
 
-    revalidatePath("/accounts");
+    revalidatePath("/ops/accounts");
     return {
       ok: true,
       message: `Added ${handle}. Connect it to store a browser session.`,
@@ -204,7 +204,7 @@ export async function connectAccountAction(formData: FormData): Promise<ActionRe
       };
     }
 
-    revalidatePath("/accounts");
+    revalidatePath("/ops/accounts");
     return {
       ok: true,
       message:
@@ -222,7 +222,7 @@ export async function verifyAccountAction(formData: FormData): Promise<ActionRes
     if (!socialAccountId) return { ok: false, message: "Missing account." };
 
     const result = await verifyAccount(socialAccountId);
-    revalidatePath("/accounts");
+    revalidatePath("/ops/accounts");
     return result.ok
       ? { ok: true, message: `Session is valid${result.handle ? ` (${result.handle})` : ""}.` }
       : { ok: false, message: result.reason };
@@ -238,7 +238,7 @@ export async function disconnectAccountAction(formData: FormData): Promise<Actio
     if (!socialAccountId) return { ok: false, message: "Missing account." };
 
     await disconnectAccount(socialAccountId, user.id);
-    revalidatePath("/accounts");
+    revalidatePath("/ops/accounts");
     return { ok: true, message: "Disconnected and the stored session was deleted." };
   } catch (error) {
     return fail(error, "Could not disconnect the account");
@@ -262,9 +262,9 @@ export async function syncAnalyticsAction(formData: FormData): Promise<ActionRes
       await refreshRecommendations(project.id);
     }
 
-    revalidatePath("/analytics");
-    revalidatePath("/recommendations");
-    revalidatePath("/");
+    revalidatePath("/ops/analytics");
+    revalidatePath("/ops/recommendations");
+    revalidatePath("/ops");
 
     return {
       ok: true,
@@ -292,8 +292,8 @@ export async function refreshLearningAction(formData: FormData): Promise<ActionR
       created += (await refreshRecommendations(project.id)).created;
     }
 
-    revalidatePath("/recommendations");
-    revalidatePath("/trends");
+    revalidatePath("/ops/recommendations");
+    revalidatePath("/ops/trends");
     return {
       ok: true,
       message: `Recomputed: ${created} recommendation(s), ${trends} trend observation(s).`,
@@ -324,8 +324,8 @@ export async function setRecommendationStatusAction(
       data: { status: parsed.data.status },
     });
 
-    revalidatePath("/recommendations");
-    revalidatePath("/");
+    revalidatePath("/ops/recommendations");
+    revalidatePath("/ops");
     return {
       ok: true,
       message:
@@ -363,8 +363,8 @@ export async function setPublishPolicyAction(
       data: { publishPolicy: parsed.data.publishPolicy },
     });
 
-    revalidatePath("/settings");
-    revalidatePath("/projects");
+    revalidatePath("/ops/settings");
+    revalidatePath("/ops/projects");
     return {
       ok: true,
       message:
@@ -399,8 +399,8 @@ export async function generateStrategyAction(formData: FormData): Promise<Action
       activate,
     });
 
-    revalidatePath("/strategy");
-    revalidatePath(`/projects/${project.slug}`);
+    revalidatePath("/ops/strategy");
+    revalidatePath(`/ops/projects/${project.slug}`);
 
     if (!result.ok) {
       // The draft is rejected, not silently downgraded: no StrategyVersion was
@@ -427,7 +427,7 @@ export async function activateStrategyAction(formData: FormData): Promise<Action
     const strategyId = String(formData.get("strategyId") ?? "");
     if (!strategyId) return { ok: false, message: "Missing strategy." };
     await activateStrategy(strategyId);
-    revalidatePath("/strategy");
+    revalidatePath("/ops/strategy");
     return { ok: true, message: "Strategy activated. The previous one is kept as superseded." };
   } catch (error) {
     return fail(error, "Could not activate the strategy");
@@ -453,8 +453,8 @@ export async function createPlanAction(formData: FormData): Promise<ActionResult
       activate: true,
     });
 
-    revalidatePath("/plan");
-    revalidatePath("/calendar");
+    revalidatePath("/ops/plan");
+    revalidatePath("/ops/calendar");
 
     if (!result.ok) {
       return { ok: false, message: `Plan rejected (${result.errorKind}): ${result.reason}` };
@@ -483,7 +483,7 @@ export async function skipBriefAction(formData: FormData): Promise<ActionResult>
       return { ok: false, message: "Say why it is being skipped — the reason is kept." };
     }
     await skipBrief({ briefId, reason });
-    revalidatePath("/plan");
+    revalidatePath("/ops/plan");
     return { ok: true, message: "Skipped. The brief and the reason are kept." };
   } catch (error) {
     return fail(error, "Could not skip the brief");
@@ -504,8 +504,8 @@ export async function assessDistributionAction(
     if (!assetId || !variantId) return { ok: false, message: "Missing the cut." };
 
     const result = await assessDistribution({ assetId, variantId });
-    revalidatePath("/distribution");
-    revalidatePath(`/content/${assetId}`);
+    revalidatePath("/ops/distribution");
+    revalidatePath(`/ops/content/${assetId}`);
 
     if (result.targets.length === 0) {
       return {
@@ -546,9 +546,9 @@ export async function dispatchDistributionAction(
       scheduledFor: whenRaw ? new Date(whenRaw) : null,
     });
 
-    revalidatePath("/distribution");
-    revalidatePath("/queue");
-    revalidatePath("/approvals");
+    revalidatePath("/ops/distribution");
+    revalidatePath("/ops/queue");
+    revalidatePath("/ops/approvals");
 
     if (!result.ok) return { ok: false, message: result.reason };
     return {
@@ -569,7 +569,7 @@ export async function exportDistributionAction(
     if (!distributionId) return { ok: false, message: "Missing the destination." };
 
     const result = await exportForManualUpload({ distributionId, userId: user.id });
-    revalidatePath("/distribution");
+    revalidatePath("/ops/distribution");
 
     if (!result.ok) return { ok: false, message: result.reason };
     return {
@@ -590,8 +590,8 @@ export async function optimizeDistributionAction(
     if (!distributionId) return { ok: false, message: "Missing the destination." };
 
     const result = await optimizeForPlatform({ distributionId });
-    revalidatePath("/distribution");
-    revalidatePath("/renders");
+    revalidatePath("/ops/distribution");
+    revalidatePath("/ops/renders");
 
     if (!result.ok) return { ok: false, message: result.reason };
     return {

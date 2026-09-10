@@ -1,337 +1,236 @@
 import type { Metadata } from "next";
-import { CalendarRange, FlaskConical, SkipForward } from "lucide-react";
-import { prisma } from "@/server/db";
-import { activePlan, planAdherence, planHistory } from "@/server/content-director";
-import { createPlanAction, skipBriefAction } from "@/app/actions/operations";
-import { PageBody, PageHeader } from "@/components/ui/page-header";
-import type { BadgeTone } from "@/components/ui/primitives";
+import { Target } from "lucide-react";
+
+import { PageHero } from "@/components/shell/page-hero";
+import { PlatformChip, StatusBadge } from "@/components/ui/data-display";
 import {
   Badge,
-  Card,
-  CardHeader,
   EmptyState,
-  KeyValue,
-  ProjectDot,
-  SectionLabel,
+  LinkButton,
+  Panel,
+  PanelBody,
+  PanelHeader,
+  Progress,
 } from "@/components/ui/primitives";
-import { ActionForm } from "@/components/ui/action-form";
-import { SubmitButton } from "@/components/ui/button";
-import { dateTimeLabel } from "@/lib/utils";
-import { BriefStatus, ContentPlanStatus } from "@/generated/prisma/enums";
+import { PlanActions } from "@/features/plan/plan-actions";
+import { PILLAR_BAR, PILLAR_COLOR } from "@/lib/display";
+import { getAdapter } from "@/lib/social-scales";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Plan" };
-export const dynamic = "force-dynamic";
 
-/**
- * The plan screen.
- *
- * Two things it must show that a calendar cannot: which strategy decision each
- * brief serves, and planned mix against delivered mix. A plan that says half
- * screen recordings against a feed that is nine tenths talking heads is a real
- * finding, and it is invisible unless both numbers are on the same page.
- */
-export default async function PlanPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ project?: string }>;
-}) {
-  const params = await searchParams;
-  const projects = await prisma.project.findMany({
-    orderBy: { createdAt: "asc" },
-    select: { id: true, slug: true, name: true, accentColor: true },
-  });
+const PLAN_STATUS_STYLE = {
+  DRAFT: "border-hairline bg-white/6 text-ink-muted",
+  AWAITING_APPROVAL: "border-warn/28 bg-warn/10 text-warn",
+  ACTIVE: "border-ok/25 bg-ok/10 text-ok",
+  COMPLETED: "border-hairline bg-white/6 text-ink-muted",
+} as const;
 
-  if (projects.length === 0) {
+export default async function PlanPage() {
+  const adapter = getAdapter();
+  const [plan, history] = await Promise.all([adapter.getActivePlan(), adapter.getPlanHistory()]);
+
+  if (!plan) {
     return (
-      <>
-        <PageHeader title="Plan" description="What each brand will publish, and why." />
-        <PageBody>
-          <Card>
+      <div className="flex flex-col gap-5">
+        <PageHero
+          title="Content"
+          accentWord="plan"
+          subtitle="The weekly strategy the whole system produces against."
+          kicker={["Objective", "Pillars", "Cadence", "Briefs"]}
+        />
+        <Panel>
+          <PanelBody className="pt-5">
             <EmptyState
-              icon={<CalendarRange />}
-              title="No projects yet"
-              body="A plan is written for one brand. Create a project first."
+              icon={<Target className="size-6" />}
+              title="No plan has been generated yet"
+              description="Finish onboarding so the system has enough business context to build the first weekly plan."
+              action={<LinkButton href="/onboarding" variant="primary" size="sm">Run onboarding</LinkButton>}
             />
-          </Card>
-        </PageBody>
-      </>
+          </PanelBody>
+        </Panel>
+      </div>
     );
   }
 
-  const selected =
-    projects.find((project) => project.slug === params.project) ?? projects[0]!;
-
-  const [plan, history] = await Promise.all([
-    activePlan(selected.id),
-    planHistory(selected.id),
-  ]);
-  const adherence = plan ? await planAdherence(plan.id) : null;
+  const byDay = plan.briefs.reduce<Record<string, typeof plan.briefs>>((acc, brief) => {
+    (acc[brief.dayLabel] ??= []).push(brief);
+    return acc;
+  }, {});
+  const dayOrder = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const shipped = plan.briefs.filter((b) => b.status === "PUBLISHED").length;
 
   return (
-    <>
-      <PageHeader
-        title="Plan"
-        description="Concrete briefs derived from the active strategy. Each one names the decision it serves, so a published post traces back to the evidence that argued for it."
-        actions={
-          <ActionForm action={createPlanAction} className="flex items-center gap-2">
-            <input type="hidden" name="projectId" value={selected.id} />
-            <input type="hidden" name="days" value="14" />
-            <SubmitButton pendingLabel="Planning…">
-              {plan ? "Replan the next 14 days" : "Plan the next 14 days"}
-            </SubmitButton>
-          </ActionForm>
-        }
+    <div className="flex flex-col gap-5">
+      <PageHero
+        title="This week's"
+        accentWord="plan"
+        subtitle={plan.objective}
+        kicker={["Objective", "Pillars", "Cadence", "Briefs"]}
+        actions={<PlanActions planId={plan.id} status={plan.status} />}
       />
 
-      <PageBody className="space-y-4">
-        {projects.length > 1 ? (
-          <nav className="flex flex-wrap items-center gap-1.5" aria-label="Project">
-            {projects.map((project) => (
-              <a
-                key={project.id}
-                href={`/plan?project=${project.slug}`}
-                aria-current={project.id === selected.id ? "page" : undefined}
-                className={
-                  project.id === selected.id
-                    ? "inline-flex items-center gap-1.5 rounded-full border border-hairline bg-surface-raised px-2.5 py-1 text-[11.5px] text-ink"
-                    : "inline-flex items-center gap-1.5 rounded-full border border-transparent px-2.5 py-1 text-[11.5px] text-ink-muted hover:bg-surface-raised/70 hover:text-ink"
-                }
-              >
-                <ProjectDot color={project.accentColor} />
-                {project.name}
-              </a>
-            ))}
-          </nav>
-        ) : null}
-
-        {!plan ? (
-          <Card>
-            <EmptyState
-              icon={<CalendarRange />}
-              title="No active plan for this brand"
-              body="A plan implements the active strategy. If there is no strategy yet, draft one first — a plan without a strategy is just a list."
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+        <div className="flex flex-col gap-5 xl:col-span-8">
+          {/* Briefs */}
+          <Panel>
+            <PanelHeader
+              eyebrow="Weekly briefs"
+              title={`${plan.briefs.length} briefs planned`}
+              description={plan.cadence}
+              action={
+                <Badge className={PLAN_STATUS_STYLE[plan.status]}>
+                  {plan.status === "AWAITING_APPROVAL" ? "Awaiting approval" : plan.status.charAt(0) + plan.status.slice(1).toLowerCase()}
+                </Badge>
+              }
             />
-          </Card>
-        ) : (
-          <>
-            <Card>
-              <CardHeader
-                title={`Plan v${plan.version} · ${plan.briefs.length} briefs`}
-                subtitle={`${dateLabel(plan.startsOn)} to ${dateLabel(plan.endsOn)} · implements strategy v${plan.strategy.version} (${plan.strategy.confidence} confidence) · ${plan.generatedBy}${plan.model ? ` (${plan.model})` : " — rules, no language model"}`}
-              />
-              <div className="space-y-4 px-4 py-4">
-                <p className="text-[13px] leading-relaxed text-ink">{plan.summary}</p>
-                {gaps(plan.rationale).length > 0 ? (
-                  <div>
-                    <SectionLabel>What this plan does not cover</SectionLabel>
-                    <ul className="mt-1 space-y-1">
-                      {gaps(plan.rationale).map((gap, index) => (
-                        <li key={index} className="text-[11.5px] leading-relaxed text-ink-muted">
-                          {gap}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            </Card>
-
-            {adherence ? (
-              <Card>
-                <CardHeader
-                  title="Planned against delivered"
-                  subtitle="Intent is not delivery. Delivered counts only briefs a post was actually made from."
-                />
-                <div className="grid gap-4 px-4 py-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <KeyValue label="Fulfilled">
-                    {adherence.fulfilled} of {adherence.planned.total}
-                  </KeyValue>
-                  <KeyValue label="Outstanding">
-                    {adherence.outstanding}
-                    {adherence.overdue > 0 ? ` (${adherence.overdue} past their date)` : ""}
-                  </KeyValue>
-                  <KeyValue label="Skipped">{adherence.skipped}</KeyValue>
-                  <KeyValue label="Experiments planned">
-                    {adherence.planned.experiments} · delivered{" "}
-                    {adherence.delivered.experiments}
-                  </KeyValue>
-                </div>
-                <div className="grid gap-4 border-t border-hairline px-4 py-4 sm:grid-cols-3">
-                  <MixColumn
-                    label="Formats"
-                    planned={adherence.planned.formats}
-                    delivered={adherence.delivered.formats}
-                  />
-                  <MixColumn
-                    label="Pillars"
-                    planned={adherence.planned.pillars}
-                    delivered={adherence.delivered.pillars}
-                  />
-                  <MixColumn
-                    label="Hook families"
-                    planned={adherence.planned.hookFamilies}
-                    delivered={adherence.delivered.hookFamilies}
-                  />
-                </div>
-              </Card>
-            ) : null}
-
-            <Card>
-              <CardHeader
-                title="Briefs"
-                subtitle="Each one names the strategy decision it serves. A skipped brief keeps its reason — the record of what was not made matters too."
-              />
-              <ul className="divide-y divide-hairline">
-                {plan.briefs.map((brief) => (
-                  <li key={brief.id} className="px-4 py-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="tabular text-[11px] text-ink-muted">
-                            #{brief.sequence}
-                          </span>
-                          <p className="text-[12.5px] font-medium text-ink">
-                            {brief.workingTitle}
-                          </p>
-                          <Badge tone={briefTone(brief.status)}>{brief.status}</Badge>
-                          {brief.isExperiment ? (
-                            <Badge tone="accent" icon={<FlaskConical />}>
-                              Test of hypothesis {(brief.hypothesisIndex ?? 0) + 1}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
-                          {brief.angle}
-                        </p>
-                        <p className="mt-1 text-[11px] text-ink-muted">
-                          {[
-                            brief.format,
-                            brief.pillarSlug ? `pillar: ${brief.pillarSlug}` : null,
-                            brief.hookFamily ? `hook: ${brief.hookFamily}` : null,
-                            brief.objectiveKpi ? `for ${brief.objectiveKpi}` : null,
-                            brief.plannedFor ? dateTimeLabel(brief.plannedFor) : "unscheduled",
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </p>
-                        <p className="mt-1 text-[11px] text-ink-muted">
-                          Serves: <span className="text-ink-secondary">{brief.strategyBasis}</span>
-                        </p>
-                        {brief.skipReason ? (
-                          <p className="mt-1 text-[11px] text-ink-muted">
-                            Skipped because: {brief.skipReason}
-                          </p>
-                        ) : null}
-                      </div>
-                      {brief.status === BriefStatus.PLANNED ||
-                      brief.status === BriefStatus.IN_PRODUCTION ? (
-                        <ActionForm
-                          action={skipBriefAction}
-                          className="flex shrink-0 items-center gap-1.5"
-                        >
-                          <input type="hidden" name="briefId" value={brief.id} />
-                          <input
-                            name="reason"
-                            placeholder="Why skip?"
-                            aria-label="Reason for skipping"
-                            className="w-36 rounded-md border border-hairline bg-surface-raised px-2 py-1 text-[11.5px] text-ink placeholder:text-ink-muted"
-                          />
-                          <SubmitButton variant="ghost" size="sm" pendingLabel="…">
-                            <SkipForward /> Skip
-                          </SubmitButton>
-                        </ActionForm>
-                      ) : null}
+            <PanelBody>
+              <div className="flex flex-col gap-3">
+                {dayOrder
+                  .filter((day) => byDay[day]?.length)
+                  .map((day) => (
+                    <div key={day} className="flex flex-col gap-2 sm:flex-row sm:gap-4">
+                      <p className="w-16 shrink-0 pt-2 text-[12px] font-semibold tracking-wider text-ink-faint uppercase">
+                        {day}
+                      </p>
+                      <ul className="flex min-w-0 flex-1 flex-col gap-2">
+                        {byDay[day].map((brief) => {
+                          const pillar = plan.pillars.find((p) => p.id === brief.pillarId);
+                          return (
+                            <li
+                              key={brief.id}
+                              className="flex flex-wrap items-start justify-between gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface-2/55 px-4 py-3"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <PlatformChip platform={brief.platform} />
+                                  {pillar ? (
+                                    <span
+                                      className={cn(
+                                        "rounded-full border px-2 py-0.5 text-[10.5px]",
+                                        PILLAR_COLOR[pillar.colorToken],
+                                      )}
+                                    >
+                                      {pillar.name}
+                                    </span>
+                                  ) : null}
+                                  <span className="text-[11px] text-ink-faint">
+                                    {new Date(brief.scheduledFor).toLocaleTimeString("en-GB", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </span>
+                                </div>
+                                <p className="mt-1.5 text-[13.5px] font-medium text-ink">{brief.title}</p>
+                                <p className="mt-0.5 text-[12px] text-ink-muted">{brief.angle}</p>
+                              </div>
+                              <StatusBadge status={brief.status} />
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </div>
+                  ))}
+              </div>
+            </PanelBody>
+          </Panel>
+
+          {/* History */}
+          <Panel>
+            <PanelHeader eyebrow="Plan history" title="Previous weeks" description="Adherence is the share of planned briefs that actually shipped." />
+            <PanelBody>
+              <div className="ss-scrollbar overflow-x-auto">
+                <table className="w-full min-w-[560px] text-left">
+                  <thead>
+                    <tr className="border-b border-hairline">
+                      {["Week", "Period", "Published", "Adherence", "Headline"].map((h) => (
+                        <th key={h} className="ss-eyebrow pb-2.5 font-semibold">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((entry) => (
+                      <tr key={entry.id} className="border-b border-hairline last:border-b-0">
+                        <td className="py-3 text-[13px] font-medium text-ink">{entry.label}</td>
+                        <td className="py-3 text-[12.5px] whitespace-nowrap text-ink-muted">
+                          {new Date(entry.periodStart).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} –{" "}
+                          {new Date(entry.periodEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        </td>
+                        <td className="py-3 text-[13px] text-ink tabular-nums">{entry.postsPublished}</td>
+                        <td className="py-3">
+                          <div className="flex items-center gap-2">
+                            <Progress value={entry.adherencePct} className="w-20" />
+                            <span className="text-[12.5px] text-ink tabular-nums">{entry.adherencePct}%</span>
+                          </div>
+                        </td>
+                        <td className="py-3 text-[12.5px] text-ink-muted">{entry.headline}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </PanelBody>
+          </Panel>
+        </div>
+
+        <div className="flex flex-col gap-5 xl:col-span-4">
+          {/* Objective */}
+          <Panel>
+            <PanelHeader eyebrow="Objective" title={plan.label} />
+            <PanelBody>
+              <p className="text-[13px] leading-relaxed text-ink-muted">{plan.objective}</p>
+
+              <div className="mt-4 border-t border-hairline pt-4">
+                <p className="ss-eyebrow">Audience</p>
+                <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-muted">{plan.audienceSummary}</p>
+              </div>
+
+              <div className="mt-4 border-t border-hairline pt-4">
+                <p className="ss-eyebrow">Cadence</p>
+                <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-muted">{plan.cadence}</p>
+              </div>
+
+              <div className="mt-4 border-t border-hairline pt-4">
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-ink-muted">
+                    Adherence · {shipped} of {plan.briefs.length} shipped
+                  </span>
+                  <span className="font-semibold text-ink tabular-nums">{plan.adherencePct}%</span>
+                </div>
+                <Progress value={plan.adherencePct} className="mt-2" />
+              </div>
+            </PanelBody>
+          </Panel>
+
+          {/* Pillars */}
+          <Panel>
+            <PanelHeader eyebrow="Content pillars" title="What this week is about" />
+            <PanelBody>
+              <ul className="flex flex-col gap-3">
+                {plan.pillars.map((pillar) => (
+                  <li key={pillar.id}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", PILLAR_COLOR[pillar.colorToken])}>
+                        {pillar.name}
+                      </span>
+                      <span className="text-[12px] text-ink-muted tabular-nums">{pillar.sharePct}%</span>
+                    </div>
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/8">
+                      <div
+                        className={cn("h-full rounded-full", PILLAR_BAR[pillar.colorToken])}
+                        style={{ width: `${pillar.sharePct}%` }}
+                      />
+                    </div>
+                    <p className="mt-1.5 text-[12px] leading-snug text-ink-muted">{pillar.description}</p>
                   </li>
                 ))}
               </ul>
-            </Card>
-          </>
-        )}
-
-        {history.length > 0 ? (
-          <Card>
-            <CardHeader
-              title="Plan history"
-              subtitle="Superseded plans keep their briefs. What was asked for is a record, whatever was made."
-            />
-            <ul className="divide-y divide-hairline">
-              {history.map((entry) => (
-                <li
-                  key={entry.id}
-                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5"
-                >
-                  <div className="min-w-0">
-                    <p className="text-[12.5px] text-ink">
-                      v{entry.version} · {entry._count.briefs} briefs · strategy v
-                      {entry.strategy.version}
-                    </p>
-                    <p className="text-[11px] text-ink-muted">
-                      {dateLabel(entry.startsOn)} to {dateLabel(entry.endsOn)} · written{" "}
-                      {dateTimeLabel(entry.createdAt)} by {entry.generatedBy}
-                    </p>
-                  </div>
-                  <Badge tone={planTone(entry.status)}>{entry.status}</Badge>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        ) : null}
-      </PageBody>
-    </>
-  );
-}
-
-function MixColumn({
-  label,
-  planned,
-  delivered,
-}: {
-  label: string;
-  planned: Record<string, number>;
-  delivered: Record<string, number>;
-}) {
-  const keys = [...new Set([...Object.keys(planned), ...Object.keys(delivered)])].sort();
-  return (
-    <div>
-      <SectionLabel>{label}</SectionLabel>
-      <ul className="mt-1 space-y-1">
-        {keys.length === 0 ? (
-          <li className="text-[11.5px] text-ink-muted">—</li>
-        ) : (
-          keys.map((key) => (
-            <li key={key} className="flex items-baseline justify-between gap-3">
-              <span className="truncate text-[11.5px] text-ink-secondary">{key}</span>
-              <span className="tabular shrink-0 text-[11.5px] text-ink-muted">
-                {delivered[key] ?? 0} / {planned[key] ?? 0}
-              </span>
-            </li>
-          ))
-        )}
-      </ul>
+            </PanelBody>
+          </Panel>
+        </div>
+      </div>
     </div>
   );
-}
-
-function briefTone(status: BriefStatus): BadgeTone {
-  if (status === BriefStatus.FULFILLED) return "good";
-  if (status === BriefStatus.READY) return "info";
-  if (status === BriefStatus.SKIPPED) return "neutral";
-  if (status === BriefStatus.IN_PRODUCTION) return "accent";
-  return "neutral";
-}
-
-function planTone(status: ContentPlanStatus): BadgeTone {
-  if (status === ContentPlanStatus.ACTIVE) return "good";
-  if (status === ContentPlanStatus.DRAFT) return "warning";
-  return "neutral";
-}
-
-function gaps(rationale: unknown): string[] {
-  const value = (rationale as { gaps?: unknown } | null)?.gaps;
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-function dateLabel(date: Date): string {
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }

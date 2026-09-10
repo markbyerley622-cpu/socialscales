@@ -5,7 +5,7 @@ import { Clapperboard, Pencil, Save, TriangleAlert, X } from "lucide-react";
 import { updateVariantAction, writeTreatmentAction } from "@/app/actions/posts";
 import { ActionForm } from "@/components/ui/action-form";
 import { Button, SubmitButton } from "@/components/ui/button";
-import { Badge, Meter, SectionLabel } from "@/components/ui/primitives";
+import { Badge, Meter, SectionLabel } from "@/components/ui/ops-primitives";
 import { RenderPanel, type RenderView } from "@/components/content/render-panel";
 import { ConfidenceBadge } from "@/components/ui/status";
 import { multiple } from "@/lib/utils";

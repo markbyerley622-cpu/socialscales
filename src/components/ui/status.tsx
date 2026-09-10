@@ -20,7 +20,7 @@ import {
   CirclePlay,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { Badge, type BadgeTone } from "./primitives";
+import { Badge, type BadgeTone } from "./ops-primitives";
 import type {
   AccountStatus,
   AdapterMode,

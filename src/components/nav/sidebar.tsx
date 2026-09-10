@@ -52,22 +52,22 @@ function groups(counts: SidebarCounts): NavGroup[] {
     {
       label: "Operate",
       items: [
-        { href: "/", label: "Overview", icon: <LayoutDashboard /> },
-        { href: "/projects", label: "Projects", icon: <Sparkles /> },
-        { href: "/strategy", label: "Strategy", icon: <Compass /> },
-        { href: "/plan", label: "Plan", icon: <ClipboardList /> },
-        { href: "/renders", label: "Renders", icon: <Clapperboard /> },
-        { href: "/distribution", label: "Distribution", icon: <Radio /> },
-        { href: "/content", label: "Content", icon: <Video /> },
-        { href: "/calendar", label: "Calendar", icon: <CalendarDays /> },
+        { href: "/ops", label: "Overview", icon: <LayoutDashboard /> },
+        { href: "/ops/projects", label: "Projects", icon: <Sparkles /> },
+        { href: "/ops/strategy", label: "Strategy", icon: <Compass /> },
+        { href: "/ops/plan", label: "Plan", icon: <ClipboardList /> },
+        { href: "/ops/renders", label: "Renders", icon: <Clapperboard /> },
+        { href: "/ops/distribution", label: "Distribution", icon: <Radio /> },
+        { href: "/ops/content", label: "Content", icon: <Video /> },
+        { href: "/ops/calendar", label: "Calendar", icon: <CalendarDays /> },
         {
-          href: "/approvals",
+          href: "/ops/approvals",
           label: "Approvals",
           icon: <ListChecks />,
           badge: counts.needsApproval,
         },
         {
-          href: "/queue",
+          href: "/ops/queue",
           label: "Publish queue",
           icon: <Gauge />,
           badge: counts.failed || counts.queued,
@@ -77,23 +77,23 @@ function groups(counts: SidebarCounts): NavGroup[] {
     {
       label: "Learn",
       items: [
-        { href: "/analytics", label: "Analytics", icon: <BarChart3 /> },
+        { href: "/ops/analytics", label: "Analytics", icon: <BarChart3 /> },
         {
-          href: "/recommendations",
+          href: "/ops/recommendations",
           label: "Recommendations",
           icon: <Lightbulb />,
           badge: counts.openRecommendations,
         },
-        { href: "/experiments", label: "Experiments", icon: <FlaskConical /> },
-        { href: "/trends", label: "Trends", icon: <TrendingUp /> },
+        { href: "/ops/experiments", label: "Experiments", icon: <FlaskConical /> },
+        { href: "/ops/trends", label: "Trends", icon: <TrendingUp /> },
       ],
     },
     {
       label: "System",
       items: [
-        { href: "/accounts", label: "Accounts", icon: <Users /> },
-        { href: "/activity", label: "Activity", icon: <Activity /> },
-        { href: "/settings", label: "Settings", icon: <Settings /> },
+        { href: "/ops/accounts", label: "Accounts", icon: <Users /> },
+        { href: "/ops/activity", label: "Activity", icon: <Activity /> },
+        { href: "/ops/settings", label: "Settings", icon: <Settings /> },
       ],
     },
   ];
@@ -115,8 +115,8 @@ export function Sidebar({ counts }: { counts: SidebarCounts }) {
           <ul className="space-y-px">
             {group.items.map((item) => {
               const active =
-                item.href === "/"
-                  ? pathname === "/"
+                item.href === "/ops"
+                  ? pathname === "/ops"
                   : pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
                 <li key={item.href}>

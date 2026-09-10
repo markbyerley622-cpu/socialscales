@@ -5,7 +5,7 @@ import { CalendarClock, Send } from "lucide-react";
 import { createPostAction } from "@/app/actions/posts";
 import { ActionForm } from "@/components/ui/action-form";
 import { SubmitButton } from "@/components/ui/button";
-import { SectionLabel } from "@/components/ui/primitives";
+import { SectionLabel } from "@/components/ui/ops-primitives";
 import { platformLabel } from "@/components/ui/status";
 import type { Platform } from "@/generated/prisma/enums";
 

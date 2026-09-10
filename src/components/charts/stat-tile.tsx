@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowRight, ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SectionLabel } from "@/components/ui/primitives";
+import { SectionLabel } from "@/components/ui/ops-primitives";
 
 /**
  * A stat tile is the right form when the data's job is a single headline number.

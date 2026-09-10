@@ -1,43 +1,70 @@
 @import "tailwindcss";
 
-/*
- * CONTENT OS design tokens.
- *
- * The interface is dark by intent — it is an operations console meant to sit open
- * all day next to an editor. Light mode is deliberately not shipped, so every
- * colour below is chosen and contrast-checked against the dark surfaces only.
- *
- * Data-visualisation colours were validated with the dataviz palette validator
- * against the real chart surface (#14141a): the three project accents pass the
- * lightness band, chroma floor, all-pairs CVD separation (worst ΔE 9.4),
- * normal-vision separation (worst ΔE 24.6) and 3:1 contrast. The diverging
- * above/below-median pair passes all-pairs at ΔE 25.7 CVD. Status colours are
- * intentionally outside that categorical system and always ship with an icon and
- * a text label, so colour never carries meaning on its own.
- */
+/* ---------------------------------------------------------------------------
+   Social Scales design tokens
+   Dark, near-black premium SaaS surface with a restrained electric-cyan accent.
+   Accent is reserved for: active nav, primary CTAs, focus rings, key metrics.
+   --------------------------------------------------------------------------- */
 
 @theme {
+  /* Surfaces */
+  --color-canvas: #04070c;
+  --color-shell: #070b12;
+  --color-surface: #0a0f18;
+  --color-surface-2: #0d131e;
+  --color-surface-3: #111926;
+  --color-hairline: #18222f;
+  --color-hairline-strong: #22303f;
+
+  /* Text */
+  --color-ink: #e8eef5;
+  --color-ink-muted: #93a3b6;
+  --color-ink-faint: #64748b;
+
+  /* Accent */
+  --color-accent: #22d3ee;
+  --color-accent-soft: #67e8f9;
+  --color-accent-deep: #0e7490;
+  --color-accent-ghost: #0b2b34;
+
+  /* Status */
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #60a5fa;
+  --color-violet: #a78bfa;
+
+  /* Radii */
+  --radius-panel: 14px;
+  --radius-card: 10px;
+  --radius-control: 8px;
+
+  /* Type */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* -------------------------------------------------------------------------
+     Operator console tokens (/ops).
+     Declared here because Tailwind only emits a utility for a token it can see
+     in @theme. The six names the two palettes share keep the product values
+     above and are overridden for the console in `.ops-theme` below, so
+     `bg-surface` means one thing in the dashboard and another in the console
+     without either side renaming a class.
+     ---------------------------------------------------------------------- */
   --color-plane: #0a0a0c;
-  --color-surface: #14141a;
   --color-surface-raised: #1a1a22;
   --color-surface-hover: #20202a;
-  --color-hairline: #26262f;
-  --color-hairline-strong: #343441;
-
-  --color-ink: #f4f4f6;
   --color-ink-secondary: #a9a9b8;
-  --color-ink-muted: #75758a;
-
-  --color-accent: #9085e9;
   --color-accent-ink: #b9b2f5;
 
-  /* Status: paired with an icon + label everywhere they appear. */
+  /* Status: always paired with an icon and a label, never colour alone. */
   --color-good: #0ca30c;
   --color-warning: #fab219;
   --color-serious: #ec835a;
   --color-critical: #d03b3b;
 
-  /* Validated categorical slots, used for project identity. */
+  /* Validated categorical slots, used for project identity in charts. */
   --color-series-1: #d95926;
   --color-series-2: #199e70;
   --color-series-3: #9085e9;
@@ -48,34 +75,33 @@
 
   --color-grid: #212129;
   --color-axis: #383843;
-
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
-
-  --radius-card: 10px;
 }
 
-/* Dark-only console: tell the browser so form controls and scrollbars match. */
-:root {
-  color-scheme: dark;
-}
+/* ---------------------------------------------------------------------------
+   The operator console's palette.
 
-html,
-body {
+   Scoped rather than global: the console is a dark violet operations surface
+   and the product dashboard is a near-black cyan one. Tailwind v4 utilities
+   compile to `var(--color-*)`, so redefining the shared names on this wrapper
+   re-points every utility inside it without touching a single class name.
+   --------------------------------------------------------------------------- */
+.ops-theme {
+  --color-surface: #14141a;
+  --color-hairline: #26262f;
+  --color-hairline-strong: #343441;
+  --color-ink: #f4f4f6;
+  --color-ink-muted: #75758a;
+  --color-accent: #9085e9;
+
   background: var(--color-plane);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-}
-
-body {
-  /* A very low-contrast vignette keeps large dark areas from looking flat. */
   background-image: radial-gradient(
     120rem 60rem at 50% -20rem,
     rgba(144, 133, 233, 0.07),
     transparent 60%
   );
   background-attachment: fixed;
+  color: var(--color-ink);
+  min-height: 100dvh;
 }
 
 /* Numbers that sit in columns must align; standalone figures should not. */
@@ -83,34 +109,23 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-::selection {
-  background: rgba(144, 133, 233, 0.32);
-}
-
-/* Scrollbars, kept quiet. */
-* {
+/* Console scrollbars, kept quiet. */
+.ops-theme * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-hairline-strong) transparent;
 }
-*::-webkit-scrollbar {
+.ops-theme *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-*::-webkit-scrollbar-thumb {
+.ops-theme *::-webkit-scrollbar-thumb {
   background: var(--color-hairline-strong);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
-*::-webkit-scrollbar-track {
+.ops-theme *::-webkit-scrollbar-track {
   background: transparent;
-}
-
-/* Visible focus everywhere, since this is a keyboard-heavy internal tool. */
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-  border-radius: 4px;
 }
 
 @keyframes contentos-fade-up {
@@ -144,15 +159,108 @@ body {
   animation: contentos-pulse-ring 2.2s ease-out infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .animate-fade-up,
-  .animate-pulse-ring {
-    animation: none;
-  }
-}
-
 /* Recharts draws its own focus ring on the surface; suppress the doubled one. */
 .recharts-wrapper:focus,
 .recharts-surface:focus {
   outline: none;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ambient light behind the app shell — subtle, never neon. */
+.ss-ambient {
+  background:
+    radial-gradient(900px 420px at 18% -10%, rgba(34, 211, 238, 0.09), transparent 62%),
+    radial-gradient(1100px 520px at 92% -18%, rgba(34, 211, 238, 0.06), transparent 60%),
+    var(--color-canvas);
+}
+
+/* Section eyebrow used across every panel header in the reference designs. */
+.ss-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.ss-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline-strong) transparent;
+}
+.ss-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.ss-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-hairline-strong);
+  border-radius: 999px;
+}
+.ss-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: rgba(34, 211, 238, 0.28);
+  color: #fff;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@keyframes ss-pulse-ring {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.ss-live-dot {
+  animation: ss-pulse-ring 2.2s ease-in-out infinite;
+}
+
+@keyframes ss-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+.ss-indeterminate::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  width: 32%;
+  background: linear-gradient(90deg, transparent, var(--color-accent), transparent);
+  animation: ss-indeterminate 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

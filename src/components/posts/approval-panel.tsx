@@ -6,7 +6,7 @@ import { CheckCircle2, ThumbsDown } from "lucide-react";
 import { approvePostAction, rejectPostAction } from "@/app/actions/posts";
 import { ActionForm } from "@/components/ui/action-form";
 import { Button, SubmitButton } from "@/components/ui/button";
-import { Badge, SectionLabel } from "@/components/ui/primitives";
+import { Badge, SectionLabel } from "@/components/ui/ops-primitives";
 import { PlatformBadge } from "@/components/ui/status";
 import { duration } from "@/lib/utils";
 import type { Platform } from "@/generated/prisma/enums";
@@ -160,7 +160,7 @@ export function ApprovalPanel({
             Approve &amp; schedule
           </SubmitButton>
           <Link
-            href={`/content/${assetId}`}
+            href={`/ops/content/${assetId}`}
             className="inline-flex h-8 items-center rounded-md px-3 text-[12px] font-medium text-ink-secondary transition-colors hover:bg-surface-raised hover:text-ink"
           >
             Edit copy
