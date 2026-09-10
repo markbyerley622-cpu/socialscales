@@ -3,7 +3,7 @@
 Resume point for a fresh session. Read this plus `docs/DECISIONS.md` and the
 diff; the conversation is not needed.
 
-**Last updated:** 2026-09-10 — intelligence programme phase 7 (rendering)
+**Last updated:** 2026-09-10 — intelligence programme phase 8 (distribution)
 
 ---
 
@@ -38,9 +38,9 @@ of the build phases above.
 | 4 | Content director | done — `92ecdf8` |
 | 5 | Asset ingestion + analysis | done — `295ce2d` |
 | 6 | Creative variants | done — `29404aa` |
-| 7 | Rendering | **done — this pass** |
-| 8 | Distribution | next |
-| 9 | Analytics | not started |
+| 7 | Rendering | done — `e73c153` |
+| 8 | Distribution | **done — this pass** |
+| 9 | Analytics | next |
 | 10 | Intelligence | not started |
 | 11 | Learning + experiments | not started |
 | 12 | Hardening | not started |
@@ -272,6 +272,52 @@ handles video sources only; still images fail explicitly rather than silently.
 
 ---
 
+## Intelligence phase 8: distribution
+
+**One line:** a rendered cut is now checked against every destination's own
+limits and then either handed to the existing automated publisher or packaged
+for a person, with the same caption either way.
+
+**Proven, against a real rendered cut:** the 10.1s 1080×1920 cut from Phase 7 was
+assessed for TikTok, Instagram and YouTube (all READY), dispatched to TikTok —
+producing an ordinary `Post` on the `RENDER`-origin asset, status READY, approval
+PENDING, one TIKTOK destination PENDING — and exported for a manual Instagram
+upload with its download URL, its composed caption and four steps.
+
+- `Distribution` is one row per (cut, platform): `fit`, the adapter's own issues,
+  and the caption that platform should receive.
+- `fit` is three-way. READY, NEEDS_OPTIMIZATION (a re-render fixes it) and
+  BLOCKED (it will not). Collapsing the last two would send an operator off to
+  render a shorter AVI.
+- Neither route acts on a destination that is not READY, and a destination that
+  has already gone out keeps its status when the cut is re-assessed.
+- **Automated** calls `createPost` on the rendered asset. Everything downstream —
+  per-platform media validation, the approval policy, the schedule, the worker,
+  verification — is the Phase 2 path, unchanged.
+- **Manual** hands over the file plus the caption *composed by that adapter*,
+  including the truncation its own limit forces, and records who took it. A
+  manual upload that says something different from the automated one would make
+  the two incomparable and quietly ruin the analytics.
+- **Optimisation** rebuilds the EDL, drops whole clips from the end and shortens
+  the last survivor, then renders that as a separate cut with its own key. A
+  blanket `-t` on the encoded file cuts wherever the clock lands, which usually
+  removes the call to action, silently.
+- `/distribution` groups by cut, plays it inline, and shows per destination the
+  fit, the issues, the route taken, and — once exported — the exact caption with
+  a copy button, the download and a link to that platform's composer.
+
+**One change to the publishing subsystem, and only one:** `createPost` required
+the variant to belong to the asset. A rendered cut is derived, so its variant
+belongs to the source footage. The check now accepts that pairing when a
+`RenderJob` joins the two. Found by running the chain end to end — the Phase 8
+fixture had hung the variant straight off the cut, a shape the system never
+produces. The fixture now models the real one, with regression tests both ways.
+
+**What is not proven:** nothing has been published to a real platform. That is
+still the TikTok account and the human sign-in, unchanged since Phase 2.
+
+---
+
 ## Live TikTok status in one line
 
 Every gate, guarantee and diagnostic around live TikTok publishing is built and
@@ -412,7 +458,7 @@ live-gate proof       2 jobs BLOCKED at PREFLIGHT with live mode on
 ## Where things are
 
 ```
-prisma/schema.prisma      38 models, 40 enums (8 migrations)
+prisma/schema.prisma      39 models, 43 enums (9 migrations)
 src/server/platforms/
   types.ts                capability model, AdapterFailure, PublicationEvidence
   dom.ts                  candidate resolution + drift diagnostics
@@ -435,6 +481,9 @@ src/server/strategy/
 src/server/content-director/
   context.ts              the plan window, cadence source, active strategy
   director.ts             plans, briefs, fulfilment, planned-vs-delivered
+src/server/distribution/
+  assess.ts               per-platform fit + the caption that platform wants
+  dispatch.ts             automated route, manual export, EDL optimisation
 src/server/rendering/
   types.ts                EditingProvider, the EDL, classified failures
   edl.ts                  treatment -> EDL, validation, idempotency key
@@ -457,16 +506,17 @@ tests/                    unit · pipeline · live-publishing · publishing-gate
                           queue-reschedule (Redis-backed) ·
                           evidence-weighting · ai-orchestration ·
                           strategy-engine · content-director ·
-                          asset-analysis · creative-treatment · rendering
+                          asset-analysis · creative-treatment · rendering ·
+                          distribution
 ```
 
 ---
 
 ## Next concrete actions
 
-1. **Intelligence phase 8: distribution.** Take an approved render through
-   per-platform optimisation and into either a manual publish or the existing
-   automated TikTok path.
+1. **Intelligence phase 9: analytics.** Close the loop — pull real numbers back
+   for a published cut and turn them into ACCOUNT_EVIDENCE, so the strategy
+   engine finally has something of this account's own to weigh.
 2. **Publish one real TikTok post.** Blocked only on a test account and a human
    sign-in. Everything else is in place.
 3. **Fix whatever selectors the live run breaks.** Expected.
@@ -598,3 +648,13 @@ types or tests.
 22. **`fetch` follows redirects by default,** so an anonymous request for
     protected media reported 200 — the login page's. `redirect: "manual"` is
     required to check an auth boundary from a script.
+
+### Intelligence phase 8
+
+23. **A test fixture that models a shape the system never produces hides real
+    bugs.** The distribution fixture hung the variant straight off the "rendered"
+    cut, so 21 tests passed while the automated route was broken for every real
+    render — `createPost` requires the variant to belong to the asset, and a cut
+    is a derived asset. The end-to-end run found it in one go. The fixture now
+    builds source → variant → render job → output, and two regression tests
+    cover the pairing rule in both directions.

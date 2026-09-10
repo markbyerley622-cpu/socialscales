@@ -313,6 +313,7 @@ model User {
   uploadedAssets  ContentAsset[]   @relation("AssetUploader")
   createdVariants ContentVariant[] @relation("VariantAuthor")
   approvedPosts   Post[]           @relation("PostApprover")
+  distributions   Distribution[]   @relation("DistributionExporter")
   activity        ActivityLog[]
 }
 
@@ -390,6 +391,7 @@ model Project {
   plans           ContentPlan[]
   briefs          ContentBrief[]
   renders         RenderJob[]
+  distributions   Distribution[]
 
   @@index([workspaceId])
 }
@@ -583,14 +585,15 @@ model ContentAsset {
   /// Uploaded by a person, or produced by a render job.
   origin  AssetOrigin @default(UPLOAD)
 
-  project    Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploader   User?            @relation("AssetUploader", fields: [uploaderId], references: [id], onDelete: SetNull)
-  pillar     ContentPillar?   @relation(fields: [pillarId], references: [id], onDelete: SetNull)
-  brief      ContentBrief?    @relation(fields: [briefId], references: [id], onDelete: SetNull)
-  renderedBy RenderJob?       @relation("RenderOutput")
-  analyses   AIAnalysis[]
-  variants   ContentVariant[]
-  posts      Post[]
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader      User?            @relation("AssetUploader", fields: [uploaderId], references: [id], onDelete: SetNull)
+  pillar        ContentPillar?   @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  brief         ContentBrief?    @relation(fields: [briefId], references: [id], onDelete: SetNull)
+  renderedBy    RenderJob?       @relation("RenderOutput")
+  distributions Distribution[]   @relation("DistributedAsset")
+  analyses      AIAnalysis[]
+  variants      ContentVariant[]
+  posts         Post[]
 
   @@unique([projectId, checksum])
   @@index([projectId, status])
@@ -676,6 +679,7 @@ model ContentVariant {
   posts              Post[]
   experimentVariants ExperimentVariant[]
   renders            RenderJob[]
+  distributions      Distribution[]
 
   @@index([assetId])
   @@index([hookFamily])
@@ -700,13 +704,14 @@ model Post {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  asset      ContentAsset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  variant    ContentVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  experiment Experiment?    @relation(fields: [experimentId], references: [id], onDelete: SetNull)
-  approvedBy User?          @relation("PostApprover", fields: [approvedById], references: [id], onDelete: SetNull)
-  targets    PostPlatform[]
-  brief      ContentBrief?
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  asset         ContentAsset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  variant       ContentVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  experiment    Experiment?    @relation(fields: [experimentId], references: [id], onDelete: SetNull)
+  approvedBy    User?          @relation("PostApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  targets       PostPlatform[]
+  brief         ContentBrief?
+  distributions Distribution[]
 
   @@index([projectId, status])
   @@index([scheduledFor])
@@ -1549,4 +1554,92 @@ model RenderJob {
   @@index([projectId, status])
   @@index([variantId, createdAt])
   @@index([status, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Distribution (Phase 8)
+//
+// A rendered cut is one file. Each platform it goes to has its own limits, its
+// own caption rules and its own idea of what fits, and one of them can publish
+// automatically while the others need a person. A Distribution is the record of
+// what was decided for one cut on one platform, and how it left the building.
+// ---------------------------------------------------------------------------
+
+/// Whether a cut can go to a platform as it stands.
+enum DistributionFit {
+  /// Passes every constraint the adapter declares.
+  READY
+  /// Fails something a derivative render can fix, e.g. it is too long.
+  NEEDS_OPTIMIZATION
+  /// Fails something rendering cannot fix.
+  BLOCKED
+}
+
+enum DistributionStatus {
+  /// Assessed against the platform, no route chosen.
+  ASSESSED
+  /// A platform-specific derivative render is in flight.
+  OPTIMIZING
+  /// Handed to the automated publish path; a Post carries it from here.
+  DISPATCHED
+  /// Handed to a person to upload by hand.
+  EXPORTED
+  CANCELLED
+}
+
+enum DistributionRoute {
+  /// The existing queue → worker → browser publish path.
+  AUTOMATED
+  /// A person downloads the file and the caption and posts it themselves.
+  MANUAL
+}
+
+model Distribution {
+  id        String   @id @default(cuid())
+  projectId String
+  variantId String
+  /// The rendered cut being distributed. Usually origin RENDER.
+  assetId   String
+  platform  Platform
+
+  fit    DistributionFit
+  status DistributionStatus @default(ASSESSED)
+  route  DistributionRoute?
+
+  /// What fails and what would fix it, from the adapter's own validation.
+  issues Json @default("[]")
+
+  /// The caption exactly as this platform should receive it, already composed
+  /// and truncated by that adapter's rules. Stored so what a person pastes is
+  /// the same text the automated path would have sent.
+  caption  String
+  hashtags String[] @default([])
+
+  /// Set when a derivative render was needed to fit this platform, pointing at
+  /// the cut it was derived from.
+  optimizedFromAssetId String?
+  optimizeRenderJobId  String?
+
+  /// Automated route: the post that carries it. Not unique — one post fans out
+  /// to several platforms, and each gets its own Distribution.
+  postId       String?
+  dispatchedAt DateTime?
+
+  /// Manual route: who took the file, and when.
+  exportedAt   DateTime?
+  exportedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  variant    ContentVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  asset      ContentAsset   @relation("DistributedAsset", fields: [assetId], references: [id], onDelete: Cascade)
+  post       Post?          @relation(fields: [postId], references: [id], onDelete: SetNull)
+  exportedBy User?          @relation("DistributionExporter", fields: [exportedById], references: [id], onDelete: SetNull)
+
+  /// One decision per cut per platform. Re-assessing updates it.
+  @@unique([assetId, platform])
+  @@index([projectId, status])
+  @@index([variantId])
 }

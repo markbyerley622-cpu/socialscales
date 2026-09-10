@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Clapperboard,
   Compass,
+  Radio,
   CalendarDays,
   FlaskConical,
   Gauge,
@@ -56,6 +57,7 @@ function groups(counts: SidebarCounts): NavGroup[] {
         { href: "/strategy", label: "Strategy", icon: <Compass /> },
         { href: "/plan", label: "Plan", icon: <ClipboardList /> },
         { href: "/renders", label: "Renders", icon: <Clapperboard /> },
+        { href: "/distribution", label: "Distribution", icon: <Radio /> },
         { href: "/content", label: "Content", icon: <Video /> },
         { href: "/calendar", label: "Calendar", icon: <CalendarDays /> },
         {

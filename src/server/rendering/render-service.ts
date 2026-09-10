@@ -2,7 +2,12 @@ import { prisma } from "@/server/db";
 import { RenderStage, RenderStatus } from "@/generated/prisma/enums";
 import { Prisma } from "@/generated/prisma/client";
 import { queueJobId, queues } from "@/server/jobs/queues";
-import { buildEdlForVariant, type EdlOptions } from "./edl";
+import {
+  buildEdlForVariant,
+  renderIdempotencyKey,
+  type EdlOptions,
+} from "./edl";
+import type { RenderEdl } from "./types";
 import { renderOutputKey } from "./render-runner";
 
 /**
@@ -42,6 +47,14 @@ export async function enqueueRender(input: {
   options?: EdlOptions;
   /** Re-run a finished job, producing a fresh file at the same key. */
   force?: boolean;
+  /**
+   * Renders this exact EDL instead of deriving one from the treatment.
+   *
+   * Used for a platform-specific derivative, where the cut is deliberately not
+   * the one the treatment describes. It hashes to its own key and so gets its
+   * own output file — the full-length original is never overwritten.
+   */
+  edlOverride?: RenderEdl;
 }): Promise<EnqueueResult> {
   const variant = await prisma.contentVariant.findUniqueOrThrow({
     where: { id: input.variantId },
@@ -49,7 +62,18 @@ export async function enqueueRender(input: {
   });
   const projectId = variant.asset.projectId;
 
-  const built = await buildEdlForVariant(input.variantId, input.options ?? {});
+  const derived = await buildEdlForVariant(input.variantId, input.options ?? {});
+  const built = input.edlOverride
+    ? {
+        edl: input.edlOverride,
+        // The override may use fewer clips than the treatment, so the source
+        // list is narrowed to what it actually references.
+        sources: derived.sources.filter((source) =>
+          input.edlOverride!.clips.some((clip) => clip.assetId === source.assetId),
+        ),
+        idempotencyKey: renderIdempotencyKey(input.variantId, input.edlOverride),
+      }
+    : derived;
 
   const existing = await prisma.renderJob.findUnique({
     where: { idempotencyKey: built.idempotencyKey },

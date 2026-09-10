@@ -69,8 +69,26 @@ export async function createPost(
       "One or more destination accounts do not belong to this project.",
     );
   }
-  if (asset.projectId !== input.projectId || variant.assetId !== input.assetId) {
-    throw new Error("Asset and variant must belong to the same project.");
+  if (asset.projectId !== input.projectId) {
+    throw new Error("That asset does not belong to this project.");
+  }
+
+  // The variant normally belongs to the asset being published. A rendered cut
+  // is the exception: it is a *derived* asset, and the variant whose treatment
+  // produced it still belongs to the source footage. Allowing that pairing is
+  // the one integration point rendering needed — the alternative would be
+  // duplicating the variant onto the cut, which would sever the link between
+  // the copy that was written and the analytics it eventually earns.
+  if (variant.assetId !== input.assetId) {
+    const renderedFromVariant = await prisma.renderJob.findFirst({
+      where: { outputAssetId: input.assetId, variantId: input.variantId },
+      select: { id: true },
+    });
+    if (!renderedFromVariant) {
+      throw new Error(
+        "That variant belongs to a different asset, and this asset was not rendered from it.",
+      );
+    }
   }
 
   // Per-platform media validation happens here, before anything is queued, so

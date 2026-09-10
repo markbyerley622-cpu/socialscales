@@ -30,6 +30,7 @@ import { connectAccount, verifyAccount } from "@/server/automation/connect-accou
 import { pruneSessions } from "@/server/auth/session";
 import { reportWorkerStatus } from "@/server/jobs/worker-status";
 import { reclaimStaleRenders, runRenderJob } from "@/server/rendering";
+import { adoptOptimizedRender } from "@/server/distribution";
 
 /**
  * The CONTENT OS worker.
@@ -241,6 +242,17 @@ workers.push(
         durationMs: result.durationMs,
         errorKind: result.errorKind,
       });
+
+      // A derivative rendered to fit a platform has to be re-assessed on its own
+      // terms: a trim that came out still too long must not read as ready.
+      if (result.outcome === "succeeded") {
+        try {
+          const adopted = await adoptOptimizedRender(job.data.renderJobId);
+          if (adopted) log("rendering", "re-assessed an optimised cut for its platform");
+        } catch (error) {
+          log("rendering", "could not re-assess the optimised cut", error);
+        }
+      }
 
       // BullMQ retries only what the runner says is worth retrying. A missing
       // asset or an out-of-range trim fails identically every time, and burning

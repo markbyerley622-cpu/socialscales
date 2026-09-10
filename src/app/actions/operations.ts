@@ -18,6 +18,12 @@ import {
   skipBrief,
 } from "@/server/content-director";
 import {
+  assessDistribution,
+  dispatchAutomated,
+  exportForManualUpload,
+  optimizeForPlatform,
+} from "@/server/distribution";
+import {
   Platform,
   PublishPolicy,
   RecommendationStatus,
@@ -481,5 +487,118 @@ export async function skipBriefAction(formData: FormData): Promise<ActionResult>
     return { ok: true, message: "Skipped. The brief and the reason are kept." };
   } catch (error) {
     return fail(error, "Could not skip the brief");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Distribution
+// ---------------------------------------------------------------------------
+
+export async function assessDistributionAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const assetId = String(formData.get("assetId") ?? "");
+    const variantId = String(formData.get("variantId") ?? "");
+    if (!assetId || !variantId) return { ok: false, message: "Missing the cut." };
+
+    const result = await assessDistribution({ assetId, variantId });
+    revalidatePath("/distribution");
+    revalidatePath(`/content/${assetId}`);
+
+    if (result.targets.length === 0) {
+      return {
+        ok: false,
+        message: "No accounts are connected for this project, so there is nowhere to send it.",
+      };
+    }
+    const ready = result.targets.filter((target) => target.fit === "READY").length;
+    return {
+      ok: true,
+      message: `Assessed for ${result.targets.length} platform${result.targets.length === 1 ? "" : "s"} — ${ready} ready.`,
+    };
+  } catch (error) {
+    return fail(error, "Could not assess this cut");
+  }
+}
+
+export async function dispatchDistributionAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    const assetId = String(formData.get("assetId") ?? "");
+    const variantId = String(formData.get("variantId") ?? "");
+    const platforms = formData.getAll("platform").map((value) => String(value));
+    const whenRaw = String(formData.get("scheduledFor") ?? "").trim();
+
+    if (!assetId || !variantId) return { ok: false, message: "Missing the cut." };
+    const targets = platforms.filter((value): value is Platform =>
+      Object.values(Platform).includes(value as Platform),
+    );
+
+    const result = await dispatchAutomated({
+      assetId,
+      variantId,
+      platforms: targets,
+      userId: user.id,
+      scheduledFor: whenRaw ? new Date(whenRaw) : null,
+    });
+
+    revalidatePath("/distribution");
+    revalidatePath("/queue");
+    revalidatePath("/approvals");
+
+    if (!result.ok) return { ok: false, message: result.reason };
+    return {
+      ok: true,
+      message: `Dispatched to ${result.platforms.join(", ")}. It follows the normal approval and publishing path from here.`,
+    };
+  } catch (error) {
+    return fail(error, "Could not dispatch this cut");
+  }
+}
+
+export async function exportDistributionAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    const distributionId = String(formData.get("distributionId") ?? "");
+    if (!distributionId) return { ok: false, message: "Missing the destination." };
+
+    const result = await exportForManualUpload({ distributionId, userId: user.id });
+    revalidatePath("/distribution");
+
+    if (!result.ok) return { ok: false, message: result.reason };
+    return {
+      ok: true,
+      message: `Ready for a manual upload to ${result.package.platformLabel}. Download the file and copy the caption below.`,
+    };
+  } catch (error) {
+    return fail(error, "Could not prepare a manual export");
+  }
+}
+
+export async function optimizeDistributionAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const distributionId = String(formData.get("distributionId") ?? "");
+    if (!distributionId) return { ok: false, message: "Missing the destination." };
+
+    const result = await optimizeForPlatform({ distributionId });
+    revalidatePath("/distribution");
+    revalidatePath("/renders");
+
+    if (!result.ok) return { ok: false, message: result.reason };
+    return {
+      ok: true,
+      message: `Queued a ${result.targetSeconds.toFixed(0)}s cut for this platform. It appears here when the worker finishes.`,
+    };
+  } catch (error) {
+    return fail(error, "Could not optimise this cut");
   }
 }

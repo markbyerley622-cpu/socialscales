@@ -765,3 +765,90 @@ later than they could have.
 
 **Consequences.** A non-retryable failure is final until someone acts. The
 renders screen offers a retry button for exactly that.
+
+---
+
+## 2026-09-10 · A destination is assessed before anything is sent to it
+
+**Context.** A cut can be too long for one platform and fine for another, and
+the failure otherwise surfaces mid-publish — in TikTok's own uploader, after a
+worker drove a browser to get there.
+
+**Decision.** `Distribution` is one row per (cut, platform), carrying a `fit` of
+READY, NEEDS_OPTIMIZATION or BLOCKED, the adapter's own issues, and the caption
+that platform should receive. Neither route will act on a destination that is not
+READY.
+
+**Rationale.** The three-way split is the useful one: "fine", "fixable by
+re-rendering" and "re-rendering will not help". Collapsing the last two into
+"failed" would send an operator to render a shorter AVI.
+
+**Consequences.** Assessment is a step. It is cheap — no encoding, only the
+adapters' declared constraints — and re-assessing updates the row rather than
+adding a second opinion. A destination that has already gone out keeps its
+status: re-running an assessment does not un-dispatch anything.
+
+---
+
+## 2026-09-10 · The manual route sends the same text the automated one would
+
+**Context.** Not every platform has an implemented publish path, and an operator
+may prefer to post by hand even where one exists.
+
+**Decision.** `exportForManualUpload` hands over the file plus the caption
+**composed by that platform's adapter** — including the truncation its own limit
+forces — and records who took it and when.
+
+**Rationale.** A manual upload that says something different from what the
+automated path would have sent makes the two incomparable, which quietly ruins
+the analytics the whole system exists to gather. Retyping loses the truncation;
+copying the raw variant text loses the platform's own caption rules.
+
+**Consequences.** An exported cut is a recorded event rather than a file that
+left without trace. The screen shows the exact caption with a copy button, the
+download, and a link to that platform's composer.
+
+---
+
+## 2026-09-10 · Optimisation trims the EDL, not the encoded file
+
+**Context.** A cut that overruns a platform's limit needs a shorter version.
+The quick way is `-t` on the finished file.
+
+**Decision.** `optimizeForPlatform` rebuilds the EDL, drops whole clips from the
+end and shortens the last survivor to land on the budget, then renders that as a
+separate cut with its own idempotency key and its own file.
+
+**Rationale.** A blanket trim of the encoded file cuts wherever the clock lands —
+which is usually mid-sentence and often removes the call to action, silently. The
+EDL knows where the beats are, so it can drop the least important ones and keep
+the hook intact.
+
+**Consequences.** The derivative is a second render, so it costs an encode. The
+full-length original is untouched and stays available for platforms that accept
+it.
+
+---
+
+## 2026-09-10 · A rendered cut publishes with the variant it was rendered from
+
+**Context.** `createPost` required the variant to belong to the asset being
+published. A rendered cut is a *derived* asset — the variant whose treatment
+produced it still belongs to the source footage — so dispatching a cut through
+the existing publish path failed on that check.
+
+**Decision.** The check now accepts the pairing when a `RenderJob` joins that
+exact asset and variant. Everything else about `createPost` is unchanged.
+
+**Alternatives.** Copying the variant onto the rendered asset.
+
+**Rationale.** Duplicating the variant would sever the link between the copy that
+was written and the analytics it eventually earns, and would leave two rows
+claiming to be the same creative treatment. This is the single integration point
+rendering needed in the publishing subsystem, and it is guarded by a real join
+rather than a loosened rule.
+
+**Consequences.** Found by running the chain end to end, not by a test — the
+Phase 8 fixture had hung the variant straight off the cut, a shape the system
+never produces. The fixture now models the real one and two regression tests
+cover both directions of the rule.

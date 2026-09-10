@@ -434,3 +434,45 @@ Implement `EditingProvider` — `availability()`, `textSupport()`, `render()` an
 `probe()` — and pass it to `runRenderJob`. It receives an EDL and absolute paths,
 and returns one file plus its probe. It owns pixels; the runner owns the record,
 the idempotency, the storage location and the verification.
+
+---
+
+## Distribution
+
+```
+ContentAsset (origin: RENDER)
+        |
+        v
+assessDistribution() ──> Distribution (one row per platform)
+        |                   fit: READY | NEEDS_OPTIMIZATION | BLOCKED
+        |                   caption: composed by that adapter
+        |
+        +-- READY + automatable ──> dispatchAutomated()
+        |                              └─> createPost() ──> the Phase 2 path
+        |                                   approval → schedule → worker → publish
+        |
+        +-- READY ────────────────> exportForManualUpload()
+        |                              └─> file + caption + steps, recorded
+        |
+        +-- NEEDS_OPTIMIZATION ───> optimizeForPlatform()
+                                       └─> trimmed EDL ──> its own render
+```
+
+### Fit is three-way on purpose
+
+| Fit | Means | What to do |
+|---|---|---|
+| `READY` | Passes every declared constraint | Dispatch or export |
+| `NEEDS_OPTIMIZATION` | Only the duration fails | Render a shorter cut |
+| `BLOCKED` | Something a re-render cannot fix | Nothing here will help |
+
+Only a duration failure is treated as fixable. Every cut this system renders is
+already 9:16 H.264/AAC, so a MIME or aspect failure means something upstream is
+wrong — and trimming an AVI produces a shorter AVI.
+
+### The one publishing integration point
+
+A variant belongs to its source footage; a rendered cut is a derived asset. When
+`createPost` sees a variant that does not belong to the asset, it accepts the
+pairing only if a `RenderJob` joins that exact asset and variant. That is the
+whole of Phase 7 and 8's reach into the publishing subsystem.
