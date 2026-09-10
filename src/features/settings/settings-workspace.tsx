@@ -99,11 +99,16 @@ function Toggle({
 export function SettingsWorkspace({
   workspace,
   profile,
-  dataMode,
+  dataSource,
 }: {
   workspace: Workspace;
   profile: Partial<BrandProfile>;
-  dataMode: "mock" | "http" | "prisma";
+  dataSource: {
+    mode: "mock" | "http" | "prisma";
+    label: string;
+    summary: string;
+    isDemo: boolean;
+  };
 }) {
   const [section, setSection] = React.useState<Section>("WORKSPACE");
   const [saved, setSaved] = React.useState(false);
@@ -293,30 +298,29 @@ export function SettingsWorkspace({
                     <div className="mt-2.5 flex items-center gap-2">
                       <Badge
                         className={
-                          dataMode === "mock"
+                          dataSource.isDemo
                             ? "border-warn/28 bg-warn/10 text-warn"
                             : "border-ok/25 bg-ok/10 text-ok"
                         }
-                        dot={dataMode === "mock" ? "bg-warn" : "bg-ok"}
+                        dot={dataSource.isDemo ? "bg-warn" : "bg-ok"}
                       >
-                        {dataMode === "mock"
-                          ? "Mock adapter"
-                          : dataMode === "http"
-                            ? "HTTP adapter"
-                            : "Live database"}
+                        {dataSource.label}
                       </Badge>
-                      <span className="text-[12.5px] text-ink-muted">
-                        {dataMode === "mock"
-                          ? "Reading from local development fixtures."
-                          : "Reading from the configured Social Scales backend."}
-                      </span>
+                      <span className="text-[12.5px] text-ink-muted">{dataSource.summary}</span>
                     </div>
+                    {dataSource.isDemo ? (
+                      <p className="mt-2.5 text-[12.5px] leading-relaxed text-warn">
+                        Every client, metric and connection status on this deployment is
+                        invented. Nothing here reflects a real account.
+                      </p>
+                    ) : null}
                     <pre className="ss-scrollbar mt-3 overflow-x-auto rounded-md border border-hairline bg-canvas p-3 text-[11.5px] leading-relaxed text-ink-muted">
-{`SOCIAL_SCALES_DATA_MODE=${dataMode}
-NEXT_PUBLIC_SOCIAL_SCALES_API_URL=<backend base url>`}
+{`SOCIAL_SCALES_DATA_MODE=${dataSource.mode}`}
                     </pre>
                     <p className="mt-3 text-[12px] leading-relaxed text-ink-faint">
-                      Switching modes is a restart of the dev server, not a code change. See INTEGRATION.md.
+                      Fixtures are refused in a production build unless
+                      SOCIAL_SCALES_ALLOW_DEMO=1 is set deliberately. See INTEGRATION.md,
+                      and /api/health for what this deployment is actually reading.
                     </p>
                   </div>
 
@@ -358,7 +362,7 @@ NEXT_PUBLIC_SOCIAL_SCALES_API_URL=<backend base url>`}
                   ["Cadence", profile.postingFrequency ?? "Not set"],
                   ["Default platform", PLATFORM_META[settings.defaultPlatform as keyof typeof PLATFORM_META]?.label ?? "—"],
                   ["Target duration", `${settings.defaultDurationSec}s`],
-                  ["Data source", dataMode === "mock" ? "Mock fixtures" : "Backend API"],
+                  ["Data source", dataSource.label],
                 ].map(([label, value]) => (
                   <div key={label} className="border-b border-hairline py-2.5 last:border-b-0">
                     <dt className="text-[11px] tracking-wide text-ink-faint uppercase">{label}</dt>
