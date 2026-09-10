@@ -352,23 +352,24 @@ model Workspace {
   projects  Project[]
   evidence  EvidenceSource[]
   learnings Learning[]
+  aiJobs    AIJob[]
 }
 
 model Project {
-  id          String        @id @default(cuid())
-  workspaceId String
-  slug        String        @unique
-  name        String
-  description String?
-  status      ProjectStatus @default(ACTIVE)
+  id            String        @id @default(cuid())
+  workspaceId   String
+  slug          String        @unique
+  name          String
+  description   String?
+  status        ProjectStatus @default(ACTIVE)
   /// Hex accent used to colour-code the project across the UI.
-  accentColor String        @default("#6366f1")
+  accentColor   String        @default("#6366f1")
   publishPolicy PublishPolicy @default(MANUAL_APPROVAL)
-  timezone    String        @default("UTC")
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  timezone      String        @default("UTC")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace       Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   brand           Brand?
   objectives      BusinessObjective[]
   audiences       AudienceSegment[]
@@ -385,6 +386,7 @@ model Project {
   experiments     Experiment[]
   recommendations Recommendation[]
   activity        ActivityLog[]
+  aiJobs          AIJob[]
 
   @@index([workspaceId])
 }
@@ -413,8 +415,8 @@ model Brand {
   prohibitedTopics String[] @default([])
   visualStyle      String?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
@@ -425,22 +427,22 @@ model Brand {
 /// against conversion, and the weighting is what lets performance analysis score
 /// a post against what the business actually wants rather than against views.
 model BusinessObjective {
-  id        String        @id @default(cuid())
-  projectId String
-  kind      ObjectiveKind
+  id                     String        @id @default(cuid())
+  projectId              String
+  kind                   ObjectiveKind
   /// The measurable series, e.g. "profileVisits" or "conversions".
-  kpi       String
+  kpi                    String
   /// 1 = most important. Ties are allowed.
-  priority  Int           @default(1)
-  targetValue Float?
+  priority               Int           @default(1)
+  targetValue            Float?
   /// Relative pull in the objective score. Normalised at read time, so the
   /// absolute numbers here carry no meaning on their own.
-  optimizationWeight Float @default(1)
+  optimizationWeight     Float         @default(1)
   /// What this KPI genuinely cannot see, e.g. "no click attribution on TikTok".
   attributionLimitations String?
-  active    Boolean       @default(true)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  active                 Boolean       @default(true)
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
@@ -449,20 +451,20 @@ model BusinessObjective {
 
 /// One audience the brand is speaking to.
 model AudienceSegment {
-  id          String         @id @default(cuid())
-  projectId   String
-  name        String
-  description String?
+  id             String         @id @default(cuid())
+  projectId      String
+  name           String
+  description    String?
   /// Only what the operator deliberately supplies. Never inferred.
-  demographics Json          @default("{}")
-  pains       String[]       @default([])
-  desires     String[]       @default([])
-  objections  String[]       @default([])
-  motivations String[]       @default([])
+  demographics   Json           @default("{}")
+  pains          String[]       @default([])
+  desires        String[]       @default([])
+  objections     String[]       @default([])
+  motivations    String[]       @default([])
   awarenessStage AwarenessStage @default(PROBLEM_AWARE)
-  priority    Int            @default(1)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  priority       Int            @default(1)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   project    Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   strategies StrategyVersion[]
@@ -663,25 +665,25 @@ model Post {
 /// A post's delivery to one social account. Publishing and analytics both hang
 /// off this row, because the same creative behaves differently per platform.
 model PostPlatform {
-  id              String             @id @default(cuid())
-  postId          String
-  socialAccountId String
-  platform        Platform
-  status          PostPlatformStatus @default(PENDING)
-  remotePostId    String?
-  permalink       String?
-  publishedAt     DateTime?
-  lastError       String?
+  id                 String             @id @default(cuid())
+  postId             String
+  socialAccountId    String
+  platform           Platform
+  status             PostPlatformStatus @default(PENDING)
+  remotePostId       String?
+  permalink          String?
+  publishedAt        DateTime?
+  lastError          String?
   /// How this destination was published. Null until an attempt succeeds.
-  adapterMode     AdapterMode?
+  adapterMode        AdapterMode?
   /// The platform's own id for the account at the moment of publishing.
-  platformAccountId String?
+  platformAccountId  String?
   /// Set only when publication was confirmed by platform-visible evidence, not
   /// merely by a successful button click.
-  verifiedAt      DateTime?
+  verifiedAt         DateTime?
   verificationMethod String?
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   post      Post                @relation(fields: [postId], references: [id], onDelete: Cascade)
   account   SocialAccount       @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
@@ -749,21 +751,21 @@ model PublishJob {
 }
 
 model PublishAttempt {
-  id            String          @id @default(cuid())
-  jobId         String
-  attemptNo     Int
-  outcome       AttemptOutcome?
+  id              String           @id @default(cuid())
+  jobId           String
+  attemptNo       Int
+  outcome         AttemptOutcome?
   /// Normalised failure reason. Null on success.
   failureCategory FailureCategory?
   /// Furthest stage reached before finishing or failing.
-  stageReached  PublishStage    @default(QUEUED)
-  adapterMode   AdapterMode?
-  startedAt     DateTime        @default(now())
-  finishedAt    DateTime?
-  errorMessage  String?
-  screenshotKey String?
+  stageReached    PublishStage     @default(QUEUED)
+  adapterMode     AdapterMode?
+  startedAt       DateTime         @default(now())
+  finishedAt      DateTime?
+  errorMessage    String?
+  screenshotKey   String?
   /// Timestamped step log for the run, shown verbatim in the job drawer.
-  steps         Json            @default("[]")
+  steps           Json             @default("[]")
 
   job PublishJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
@@ -893,13 +895,11 @@ model Recommendation {
 
 /**
  * What the publishing worker reports about itself.
- *
  * The worker is a separate process, so the web app cannot know from its own
  * configuration whether publishing is actually live — and a UI that says
  * "simulation" while the worker publishes for real is worse than no UI at all.
  * The worker writes here on start and on every sweep; the console reads this
  * rather than its own environment.
- *
  * Singleton: one row, id "worker".
  */
 model WorkerStatus {
@@ -1055,11 +1055,11 @@ model LearningEvidence {
 
 /// An immutable snapshot of the strategy at a point in time.
 model StrategyVersion {
-  id      String         @id @default(cuid())
+  id        String         @id @default(cuid())
   projectId String
-  version Int
-  status  StrategyStatus @default(DRAFT)
-  summary String
+  version   Int
+  status    StrategyStatus @default(DRAFT)
+  summary   String
 
   targetAudienceId     String?
   primaryObjectiveId   String?
@@ -1126,4 +1126,139 @@ model RecommendationEvidence {
 
   @@id([recommendationId, evidenceSourceId])
   @@index([evidenceSourceId])
+}
+
+// ---------------------------------------------------------------------------
+// AI orchestration (Phase 2)
+//
+// Every model interaction in this system goes through one boundary and leaves
+// two records behind: an AIJob describing what was asked and what came back,
+// and one AIUsageLog per provider call — including repair attempts, because a
+// repair costs money and hiding it would understate the true cost of a feature.
+// ---------------------------------------------------------------------------
+
+/// What kind of thing produced a result. Never inferred from the provider name.
+enum AIProviderKind {
+  /// Rule-based, local, no model call. Must never be presented as model output.
+  DETERMINISTIC
+  /// A hosted large language model.
+  LLM
+}
+
+enum AIJobStatus {
+  PENDING
+  RUNNING
+  /// Provider returned output that validated against the operation's schema.
+  SUCCEEDED
+  /// Provider answered, but never produced schema-valid output despite repair.
+  INVALID_OUTPUT
+  /// Provider errored — network, rate limit, refusal, overload.
+  FAILED
+  /// No provider was able to serve the request, e.g. no API key configured.
+  UNAVAILABLE
+}
+
+/// The catalogue of things this system asks a model to do. A new operation is a
+/// deliberate act: it needs a registered, versioned prompt and an output schema.
+enum AIOperation {
+  ASSET_ANALYSIS
+  COPY_VARIANTS
+  STRATEGY_DRAFT
+  CONTENT_PLAN
+  HOOK_REWRITE
+  LEARNING_SUMMARY
+}
+
+/// One request through the AI boundary, from first attempt to typed result.
+model AIJob {
+  id          String      @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  operation   AIOperation
+  status      AIJobStatus @default(PENDING)
+
+  /// Which provider actually served it, and what class of thing it is.
+  providerName String
+  providerKind AIProviderKind
+  /// Null for deterministic providers, which have no model.
+  model        String?
+
+  /// The registered prompt used. Version is part of the record so a change in
+  /// wording is visible in the history rather than silently rewriting the past.
+  promptName    String
+  promptVersion String
+  /// Hash of the rendered prompt, so identical text is provably identical.
+  promptHash    String
+
+  /// Hash of the typed input. Two jobs with the same hash asked the same thing.
+  inputHash String
+  /// The typed input as given to the boundary. Contains brand context, never secrets.
+  input     Json   @default("{}")
+  /// The validated, typed result. Null unless status is SUCCEEDED.
+  output    Json?
+
+  /// Total provider calls made, including repair attempts.
+  attempts         Int  @default(0)
+  /// How many of those were repair attempts after a validation failure.
+  repairAttempts   Int  @default(0)
+  /// Validation failures encountered, kept so bad schemas are debuggable.
+  validationErrors Json @default("[]")
+
+  /// Classified failure, e.g. RATE_LIMIT, TIMEOUT, INVALID_OUTPUT, UNAVAILABLE.
+  errorKind String?
+  /// Human-readable failure summary. Never contains credentials.
+  error     String?
+
+  /// Rolled up from AIUsageLog so listing jobs does not require an aggregate.
+  inputTokens  Int   @default(0)
+  outputTokens Int   @default(0)
+  costUsd      Float @default(0)
+  /// Wall-clock time across every attempt, in milliseconds.
+  latencyMs    Int   @default(0)
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  usage     AIUsageLog[]
+
+  @@index([workspaceId, operation, createdAt])
+  @@index([projectId, createdAt])
+  @@index([status])
+  @@index([inputHash])
+}
+
+/// One provider call. A job with two repairs has three of these.
+model AIUsageLog {
+  id      String @id @default(cuid())
+  aiJobId String
+  /// 1-based. Attempt 1 is the original; later attempts are repairs or retries.
+  attempt Int
+
+  providerName String
+  providerKind AIProviderKind
+  model        String?
+
+  inputTokens      Int @default(0)
+  outputTokens     Int @default(0)
+  cacheReadTokens  Int @default(0)
+  cacheWriteTokens Int @default(0)
+
+  /// Computed from the provider's own price table at the time of the call, so a
+  /// later price change does not rewrite what past work cost.
+  costUsd   Float @default(0)
+  latencyMs Int   @default(0)
+
+  ok        Boolean @default(true)
+  errorKind String?
+
+  createdAt DateTime @default(now())
+
+  job AIJob @relation(fields: [aiJobId], references: [id], onDelete: Cascade)
+
+  @@unique([aiJobId, attempt])
+  @@index([createdAt])
 }

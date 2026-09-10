@@ -25,6 +25,8 @@ npm run db:up
 
 # 2. Environment
 cp .env.example .env.local          # then generate the two secrets it names
+                                    # ANTHROPIC_API_KEY is optional: without it
+                                    # the system runs on rules, and says so
 
 # 3. Schema + demo data
 npm run db:migrate
@@ -57,6 +59,8 @@ This distinction is enforced in the product, not just in this README.
 | Database, schema, migrations | Real |
 | Upload, validation, fingerprinting, container probing | Real |
 | AI metadata generation | Real, local heuristics (`AI_PROVIDER=heuristic`) |
+| AI orchestration boundary | Real. Versioned prompts, schema validation, repair, cost and latency accounting |
+| Language-model calls | **Inactive** without `ANTHROPIC_API_KEY`. Rules serve instead, labelled as rules |
 | Approval, scheduling, queues, retries, idempotency | Real |
 | Publishing to a live platform | **Off by default** — the simulator runs instead |
 | Analytics numbers | **Simulated** while publishing is simulated, and labelled as such everywhere |
@@ -206,7 +210,13 @@ means implementing one function with the same return shape.
 | `AUTH_COOKIE_SECRET` | yes | Signs the operator session cookie |
 | `OPERATOR_EMAIL` / `OPERATOR_PASSWORD` / `OPERATOR_NAME` | seed only | The seeded operator account |
 | `STORAGE_DIR` | no | Where media and artefacts are written. Default `./storage` |
-| `AI_PROVIDER` | no | `heuristic` (default) |
+| `AI_PROVIDER` | no | Copy-suggestion provider for the pre-orchestration path. `heuristic` (default) |
+| `AI_MODEL_PROVIDER` | no | `auto` (default) uses the model when a key is set and rules otherwise; `deterministic` never calls a model; `anthropic` requires one and fails rather than substituting |
+| `AI_MODEL` | no | Default `claude-opus-5` |
+| `ANTHROPIC_API_KEY` | no | Leave blank to run entirely on rules. Read only by `src/env.ts`, never logged or stored |
+| `AI_MAX_REPAIRS` | no | Schema-repair attempts per job. Default `2` |
+| `AI_MAX_RETRIES` | no | Transport retries per job. Default `2` |
+| `AI_REQUEST_TIMEOUT_MS` | no | Default `120000` |
 | `ENABLE_LIVE_PUBLISHING` | no | `1` to drive real browsers against real accounts |
 | `PLAYWRIGHT_HEADLESS` | no | Must be `0` to connect an account by hand |
 | `QUEUE_PREFIX` | no | Redis key namespace for the queues. Default `bull` |

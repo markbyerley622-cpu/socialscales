@@ -3,7 +3,7 @@
 Resume point for a fresh session. Read this plus `docs/DECISIONS.md` and the
 diff; the conversation is not needed.
 
-**Last updated:** 2026-09-10 — phase 2 (TikTok live readiness)
+**Last updated:** 2026-09-10 — intelligence programme phase 2 (AI orchestration)
 
 ---
 
@@ -13,13 +13,72 @@ Build CONTENT OS: an internal console for testing several product ideas at once
 by publishing short-form content for each, measuring what happens, and letting
 that history drive the next round of content.
 
-- **Phase 1 (done):** the whole pipeline, end to end, against a publish simulator.
-- **Phase 2 (this pass):** everything required to publish to a *real* TikTok test
-  account, and honest reporting of what remains unproven.
+The system has since been extended into an **AI SMMA content intelligence OS**:
+the same pipeline, closed into a loop that learns from what it published.
+
+### The original build
+
+- **Build phase 1 (done):** the whole pipeline, end to end, against a publish
+  simulator.
+- **Build phase 2 (done):** everything required to publish to a *real* TikTok
+  test account, and honest reporting of what remains unproven. Still blocked on a
+  human sign-in — see below.
+
+### The intelligence programme
+
+Twelve phases, each with its own verification gate. Numbering here is independent
+of the build phases above.
+
+| # | Phase | State |
+|---|---|---|
+| 1 | Foundation: workspace, brand, objectives, audiences | done — `90f4dbe` |
+| 1a | Account vs global/external evidence separation | done — `90f4dbe` |
+| 2 | AI orchestration boundary | **done — this pass** |
+| 3 | Strategy engine | next |
+| 4 | Content director | not started |
+| 5 | Asset ingestion + analysis | not started |
+| 6 | Creative variants | not started |
+| 7 | Rendering | not started |
+| 8 | Distribution | not started |
+| 9 | Analytics | not started |
+| 10 | Intelligence | not started |
+| 11 | Learning + experiments | not started |
+| 12 | Hardening | not started |
 
 ---
 
-## Phase 2 status in one line
+## Intelligence phase 2: AI orchestration
+
+**One line:** every model interaction now goes through a single boundary that
+records what was asked, who answered, whether the answer validated, what it cost
+and how long it took — and rule-based answers are labelled as rule-based, never as
+model output.
+
+- `runAiOperation()` in `src/server/ai/orchestration/run.ts` is the only place a
+  model is called. Two tests enforce it by scanning `src/**` for
+  `@anthropic-ai/sdk` imports and `ANTHROPIC_API_KEY` reads.
+- Prompts are registered and versioned. The registry refuses a duplicate
+  name+version, so changing wording without bumping the version fails at import.
+- Every prompt ships a `deterministic()` implementation validated by the same
+  schema, so the system works fully with no API key.
+- The Anthropic provider is implemented and **inactive** until
+  `ANTHROPIC_API_KEY` is set. `AI_MODEL_PROVIDER` controls the policy:
+  `auto` (model if available, else rules), `deterministic` (never a model),
+  `anthropic` (model or fail, never a silent substitution).
+- Invalid output is repaired, not accepted. `refine()` extends that to rules a
+  schema cannot express — a brand's banned phrases are corrected by a repair turn
+  rather than found in the approval queue.
+- Every attempt is billed in `AIUsageLog`, including repairs, including failures.
+
+**What is not proven:** no request has reached the Anthropic API, because no key
+is configured. The prompts, the schemas and the repair loop are exercised against
+a stub provider and against the deterministic provider. The first real call may
+find prompt wording that needs work; the validation and repair machinery is what
+makes that recoverable rather than silent.
+
+---
+
+## Live TikTok status in one line
 
 Every gate, guarantee and diagnostic around live TikTok publishing is built and
 verified. **No real TikTok post has been published**, because that requires a
@@ -159,7 +218,7 @@ live-gate proof       2 jobs BLOCKED at PREFLIGHT with live mode on
 ## Where things are
 
 ```
-prisma/schema.prisma      24 models, 25 enums
+prisma/schema.prisma      35 models, 34 enums
 src/server/platforms/
   types.ts                capability model, AdapterFailure, PublicationEvidence
   dom.ts                  candidate resolution + drift diagnostics
@@ -170,24 +229,45 @@ src/server/automation/
   publish-runner.ts       gates, stages, classification, reconciliation
 src/server/jobs/
   worker-status.ts        worker heartbeat + effective publishing mode
+src/server/intelligence/
+  weighting.ts            evidence weights; no fixed blend ratios
+  evidence.ts             the only writer of EvidenceSource
+  learning.ts             hypothesis -> supported lifecycle
+src/server/knowledge/     global priors / external providers; cannot write
+                          ACCOUNT_EVIDENCE
+src/server/ai/orchestration/
+  run.ts                  runAiOperation — THE boundary
+  registry.ts             versioned prompts + hashes
+  validate.ts             JSON extraction, schema validation, repair turns
+  pricing.ts              price tables, priced-at-call-time
+  accounting.ts           spend and latency, read from AIUsageLog
+  status.ts               what the boundary is doing, for diagnostics
+  providers/              deterministic · anthropic (inactive without a key)
+  prompts/                asset-analysis · copy-variants
 worker/index.ts           6 queues, sweeper, heartbeat, reconciliation
 tests/                    unit · pipeline · live-publishing · publishing-gates ·
-                          queue-reschedule (Redis-backed)
+                          queue-reschedule (Redis-backed) ·
+                          evidence-weighting · ai-orchestration
 ```
 
 ---
 
 ## Next concrete actions
 
-1. **Publish one real TikTok post.** Blocked only on a test account and a human
+1. **Intelligence phase 3: the strategy engine.** Consume `EvidenceSource` and
+   `Learning` through the weighting mechanism, produce an immutable
+   `StrategyVersion` with `StrategyEvidence` links, and register a
+   `strategy-draft` prompt with a deterministic implementation so it works with
+   no API key.
+2. **Publish one real TikTok post.** Blocked only on a test account and a human
    sign-in. Everything else is in place.
-2. **Fix whatever selectors the live run breaks.** Expected.
-3. **Confirm one real metrics read**, so at least one snapshot is
+3. **Fix whatever selectors the live run breaks.** Expected.
+4. **Confirm one real metrics read**, so at least one snapshot is
    `BROWSER_ASSISTED` rather than `SIMULATED`.
-4. **Move YouTube to its Data API** — the only platform with a documented upload
+5. **Move YouTube to its Data API** — the only platform with a documented upload
    and scheduling API. Implement `publishViaApi` and flip three capability
    entries; nothing outside that adapter changes.
-5. **Thumbnails.** `ContentAsset.thumbnailKey` exists and is never populated.
+6. **Thumbnails.** `ContentAsset.thumbnailKey` exists and is never populated.
 
 ---
 
@@ -232,6 +312,10 @@ types or tests.
 
 ## Things worth not forgetting
 
+- The AI boundary is enforced by tests, not convention: `tests/ai-orchestration.test.ts`
+  scans `src/**` for `@anthropic-ai/sdk` imports and `ANTHROPIC_API_KEY` reads.
+- `tests/setup.ts` clears `ANTHROPIC_API_KEY` and pins `AI_MODEL_PROVIDER=deterministic`,
+  so `npm test` cannot spend money even on a machine with a real key in `.env.local`.
 - The seed is deterministic (mulberry32) and also obliterates this app's own
   BullMQ queues, so a re-seed leaves no orphan jobs.
 - `npm run db:seed` truncates `UserSession`, so it signs you out.
@@ -247,3 +331,18 @@ types or tests.
   command lines reliably. Use PowerShell `Get-CimInstance Win32_Process` and
   filter on `CommandLine`, or `taskkill /PID`. Stray workers caused a confusing
   hour of debugging.
+
+### Intelligence phase 2
+
+12. **Prisma's client accessor for `AIJob` is `prisma.aIJob`**, not `aiJob` —
+    Prisma lowercases only the first character. `AIAnalysis` was already
+    `aIAnalysis`, so the ugliness is at least consistent. `prisma migrate dev`
+    did not regenerate the client here; `npx prisma generate` was needed before
+    the new model existed on the client.
+13. **The copy prompt initially banned the `#` on hashtags.** The rest of the
+    system stores tags *with* it (`Hashtag.tag = "#testing"`), so the prompt was
+    holding the model to a shape nothing else used, and the deterministic
+    implementation failed its own schema. Found by the test, not by review.
+14. **`Date.now()` in a server component fails lint** under the React compiler's
+    purity rule, even in a `force-dynamic` page. Trailing-window queries take a
+    day count and compute the cutoff inside the data layer (`recentAiSpend`).

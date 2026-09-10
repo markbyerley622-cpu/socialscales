@@ -63,6 +63,7 @@ export async function migrateTestSchema(): Promise<void> {
 }
 
 const TABLES = [
+  "AIUsageLog", "AIJob",
   "RecommendationEvidence", "StrategyEvidence", "LearningEvidence",
   "StrategyVersion", "Learning", "EvidenceSource",
   "AudienceSegment", "BusinessObjective", "Workspace",

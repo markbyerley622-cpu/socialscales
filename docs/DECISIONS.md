@@ -331,3 +331,90 @@ to 1.
 **Rationale.** A failure injector nobody can turn off is not a feature, it is
 flakiness. Making it explicit also made the retry path testable on purpose rather
 than by luck.
+
+---
+
+## 2026-09-10 · One AI boundary, and the deterministic provider is never disguised
+
+**Context.** Phase 2 introduces model interaction. Two things could go wrong
+quietly: model calls spreading into routes, components and workers where nothing
+records them; and rule-based output being read as model output, which would make
+the system look more capable than it is and, worse, make a template look like an
+insight.
+
+**Decision.** `runAiOperation` in `src/server/ai/orchestration` is the only place
+a model is called. A provider declares `kind` — `DETERMINISTIC` or `LLM` — and
+that declaration is written to `AIJob`, carried in `AiProvenance`, and rendered by
+`provenanceLabel()`. The deterministic provider's `model` is null and its label
+says "no language model was used". Two tests enforce the boundary mechanically by
+scanning `src/**` for `@anthropic-ai/sdk` imports and `ANTHROPIC_API_KEY` reads
+outside their one permitted file each.
+
+**Alternatives.** Letting each service call the SDK with a shared helper; deriving
+"was this a model?" from whether the model field is set.
+
+**Rationale.** A convention that only a reviewer enforces is not a boundary. The
+provenance claim has one source — the provider's own declaration — rather than
+being re-derived per screen from whatever field happens to be populated.
+
+**Consequences.** Adding an operation means registering a prompt with a schema and
+a deterministic implementation, which is more work than a bare SDK call. That is
+the intended cost.
+
+---
+
+## 2026-09-10 · Every prompt ships a deterministic implementation
+
+**Context.** There is no `ANTHROPIC_API_KEY` in this environment, and there may
+not be one in a given deployment. The obvious options were to block the feature
+or to stub it.
+
+**Decision.** `PromptDefinition` requires a `deterministic()` function alongside
+`render()` and `schema`. Rule output goes through the *same* schema validation as
+model output. In `auto` mode a missing key falls back to rules, and the fallback
+is recorded as a real attempt on the job with reason `UNAVAILABLE` rather than
+being silent.
+
+**Rationale.** It keeps the whole system exercisable end-to-end without a key,
+which makes the AI layer testable at all; and running rules through the same
+validation means a rule that drifts out of contract fails visibly instead of
+shipping a malformed object a model would be blamed for.
+
+**Consequences.** Two implementations per operation to keep in sync — mitigated by
+the shared schema, which fails loudly when they diverge. The deterministic
+provider refuses repair attempts: a rule producing invalid output is a bug, and
+retrying it would only hide it.
+
+---
+
+## 2026-09-10 · Brand rules are repaired, not discovered in review
+
+**Context.** A schema can express "caption is a string under 2000 characters". It
+cannot express "must not contain this brand's banned phrases", because those
+depend on the request's own input.
+
+**Decision.** `PromptDefinition.refine(value, input)` returns a list of problems
+after schema validation passes, and those problems feed the same repair loop.
+
+**Rationale.** A banned phrase caught here costs one repair round-trip. The same
+phrase caught in the approval queue costs a person's attention, and caught after
+publication costs more than that.
+
+**Consequences.** A repair costs a real call, and the cost appears in
+`AIUsageLog` — attempts are billed individually, so a job that needed two repairs
+reports three calls rather than one.
+
+---
+
+## 2026-09-10 · Cost is priced at call time and unknown models are flagged
+
+**Context.** Prices change. A report that recomputes historical spend from
+today's price table reports a number that was never true.
+
+**Decision.** `AIUsageLog.costUsd` is computed from the price table at the moment
+of the call and never recomputed. A model with no entry in the table prices at
+zero with `priced: false`, so the total is reported as a floor rather than a
+guess.
+
+**Consequences.** Adding a model means adding its prices, or its usage silently
+contributes nothing to the bill — which the `priced` flag is there to surface.

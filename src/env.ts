@@ -27,6 +27,13 @@ function ratio(name: string, fallback: number): number {
   return parsed;
 }
 
+function count(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function flag(name: string, fallback = false): boolean {
   const value = process.env[name];
   if (value === undefined || value.trim() === "") return fallback;
@@ -45,6 +52,26 @@ export const env = {
   authCookieSecret: required("AUTH_COOKIE_SECRET"),
   storageDir: optional("STORAGE_DIR", "./storage"),
   aiProvider: optional("AI_PROVIDER", "heuristic"),
+  /**
+   * The AI orchestration boundary (src/server/ai/orchestration).
+   *
+   * `model.provider` is "auto" by default: use the language model when a key is
+   * configured, otherwise fall back to rules. The fallback is never silent — the
+   * job records which provider served it and the UI says so.
+   *
+   * The API key is read here and read nowhere else. It is never logged, never
+   * serialised into a job record, and never sent to the browser.
+   */
+  model: {
+    provider: optional("AI_MODEL_PROVIDER", "auto"),
+    name: optional("AI_MODEL", "claude-opus-5"),
+    anthropicApiKey: process.env["ANTHROPIC_API_KEY"] ?? "",
+    /** Schema-repair attempts after an invalid generation, per job. */
+    maxRepairs: count("AI_MAX_REPAIRS", 2),
+    /** Retries for retryable transport failures, per job. */
+    maxRetries: count("AI_MAX_RETRIES", 2),
+    requestTimeoutMs: count("AI_REQUEST_TIMEOUT_MS", 120_000),
+  },
   enableLivePublishing: flag("ENABLE_LIVE_PUBLISHING", false),
   /**
    * Fraction of first attempts the publish simulator fails, 0..1.

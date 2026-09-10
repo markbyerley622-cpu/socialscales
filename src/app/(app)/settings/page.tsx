@@ -9,6 +9,7 @@ import {
 } from "@/server/jobs/worker-status";
 import { listAdapters } from "@/server/platforms/registry";
 import { getAiProvider, listProviders } from "@/server/ai";
+import { aiBoundaryStatus, formatUsd, recentAiSpend } from "@/server/ai/orchestration";
 import { exists } from "@/server/storage";
 import { setPublishPolicyAction } from "@/app/actions/operations";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
@@ -68,6 +69,8 @@ export default async function SettingsPage() {
   ]);
 
   const [assetCount, snapshotCount, jobCount, activityCount] = counts;
+  const aiStatus = aiBoundaryStatus();
+  const aiSpend30d = await recentAiSpend(30);
   const redisOk = Array.isArray(redis);
   const provider = getAiProvider();
 
@@ -146,6 +149,13 @@ export default async function SettingsPage() {
               ok
               label="AI provider"
               detail={`${provider.name} (${provider.model}). Transcription: ${provider.canTranscribe ? "supported" : "not supported"}. Available: ${listProviders().join(", ")}.`}
+            />
+            <CheckRow
+              ok
+              okLabel={aiStatus.modelActive ? "Model" : "Rules"}
+              warnOnly={!aiStatus.modelActive}
+              label="AI orchestration boundary"
+              detail={`${aiStatus.headline} Last 30 days: ${aiSpend30d.jobs} jobs, ${aiSpend30d.attempts} provider attempts, ${formatUsd(aiSpend30d.costUsd)}.`}
             />
             <CheckRow
               ok={!env.playwrightHeadless}

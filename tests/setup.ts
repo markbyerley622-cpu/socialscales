@@ -39,6 +39,12 @@ process.env.QUEUE_PREFIX = "bull-test";
 // for reasons unrelated to what is being tested. Tests that want the failure
 // path turn it on explicitly.
 process.env.SIMULATED_FAILURE_RATE = "0";
+// The AI boundary is pinned to the rule-based provider and the API key is
+// cleared unconditionally. A developer with a real key in .env.local must not
+// have `npm test` spend money or reach the network, and a test that wants the
+// model path passes a stub provider explicitly.
+process.env.AI_MODEL_PROVIDER = "deterministic";
+process.env.ANTHROPIC_API_KEY = "";
 
 /** postgresql://…/contentos → postgresql://…/contentos_test */
 export function toTestDatabase(url: string): string {
