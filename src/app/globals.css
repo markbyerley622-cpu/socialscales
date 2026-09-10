@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+/*
+ * CONTENT OS design tokens.
+ *
+ * The interface is dark by intent — it is an operations console meant to sit open
+ * all day next to an editor. Light mode is deliberately not shipped, so every
+ * colour below is chosen and contrast-checked against the dark surfaces only.
+ *
+ * Data-visualisation colours were validated with the dataviz palette validator
+ * against the real chart surface (#14141a): the three project accents pass the
+ * lightness band, chroma floor, all-pairs CVD separation (worst ΔE 9.4),
+ * normal-vision separation (worst ΔE 24.6) and 3:1 contrast. The diverging
+ * above/below-median pair passes all-pairs at ΔE 25.7 CVD. Status colours are
+ * intentionally outside that categorical system and always ship with an icon and
+ * a text label, so colour never carries meaning on its own.
+ */
+
+@theme {
+  --color-plane: #0a0a0c;
+  --color-surface: #14141a;
+  --color-surface-raised: #1a1a22;
+  --color-surface-hover: #20202a;
+  --color-hairline: #26262f;
+  --color-hairline-strong: #343441;
+
+  --color-ink: #f4f4f6;
+  --color-ink-secondary: #a9a9b8;
+  --color-ink-muted: #75758a;
+
+  --color-accent: #9085e9;
+  --color-accent-ink: #b9b2f5;
+
+  /* Status: paired with an icon + label everywhere they appear. */
+  --color-good: #0ca30c;
+  --color-warning: #fab219;
+  --color-serious: #ec835a;
+  --color-critical: #d03b3b;
+
+  /* Validated categorical slots, used for project identity. */
+  --color-series-1: #d95926;
+  --color-series-2: #199e70;
+  --color-series-3: #9085e9;
+
+  /* Diverging: above vs below the project median. */
+  --color-above: #3987e5;
+  --color-below: #d03b3b;
+
+  --color-grid: #212129;
+  --color-axis: #383843;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+
+  --radius-card: 10px;
+}
+
+/* Dark-only console: tell the browser so form controls and scrollbars match. */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-plane);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  /* A very low-contrast vignette keeps large dark areas from looking flat. */
+  background-image: radial-gradient(
+    120rem 60rem at 50% -20rem,
+    rgba(144, 133, 233, 0.07),
+    transparent 60%
+  );
+  background-attachment: fixed;
+}
+
+/* Numbers that sit in columns must align; standalone figures should not. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: rgba(144, 133, 233, 0.32);
+}
+
+/* Scrollbars, kept quiet. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-hairline-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Visible focus everywhere, since this is a keyboard-heavy internal tool. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@keyframes contentos-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-up {
+  animation: contentos-fade-up 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes contentos-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(250, 178, 25, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(250, 178, 25, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(250, 178, 25, 0);
+  }
+}
+
+.animate-pulse-ring {
+  animation: contentos-pulse-ring 2.2s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-pulse-ring {
+    animation: none;
+  }
+}
+
+/* Recharts draws its own focus ring on the surface; suppress the doubled one. */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}

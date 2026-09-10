@@ -1,0 +1,691 @@
+// CONTENT OS relational schema.
+//
+// Design notes:
+//  - A Project is one product idea/brand under test. Everything is scoped to it.
+//  - A ContentAsset is the uploaded media. A ContentVariant is one copy treatment
+//    (hook/caption/hashtags/CTA) of that media. A Post pairs an asset+variant and
+//    is what gets approved and scheduled. A PostPlatform is that post's fanout to
+//    one social account, and is the unit that publishes and collects analytics.
+//  - PublishJob is 1:1 with PostPlatform and carries a unique idempotency key so
+//    the same content can never be published twice by a retry.
+//  - AnalyticsSnapshot is append-only: history is never overwritten.
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  EDITOR
+  APPROVER
+}
+
+enum ProjectStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+/// How much human involvement a project's publishing requires.
+enum PublishPolicy {
+  MANUAL_APPROVAL
+  AUTO_PUBLISH
+  SMART_APPROVAL
+}
+
+enum Platform {
+  TIKTOK
+  INSTAGRAM
+  YOUTUBE
+}
+
+enum AccountStatus {
+  DISCONNECTED
+  CONNECTED
+  NEEDS_REAUTH
+  ERROR
+}
+
+enum PlatformSessionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+enum AssetKind {
+  VIDEO
+  IMAGE
+}
+
+enum AssetStatus {
+  UPLOADED
+  ANALYZING
+  ANALYZED
+  ANALYSIS_FAILED
+  ARCHIVED
+}
+
+enum ContentFormat {
+  TALKING_HEAD
+  SCREEN_RECORDING
+  TUTORIAL
+  STORY
+  COMPARISON
+  LIST
+  REACTION
+  BUILD_IN_PUBLIC
+  UNKNOWN
+}
+
+enum PostStatus {
+  DRAFT
+  READY
+  APPROVED
+  SCHEDULED
+  UPLOADING
+  PUBLISHED
+  FAILED
+  ARCHIVED
+}
+
+enum ApprovalState {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PostPlatformStatus {
+  PENDING
+  QUEUED
+  UPLOADING
+  PUBLISHED
+  FAILED
+  SKIPPED
+}
+
+enum JobStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  DEAD_LETTER
+}
+
+enum AttemptOutcome {
+  SUCCESS
+  RETRYABLE_FAILURE
+  PERMANENT_FAILURE
+}
+
+/// Where a metric came from. Browser-assisted numbers are less trustworthy than
+/// official API numbers and the UI labels them as such.
+enum MetricSource {
+  OFFICIAL_API
+  BROWSER_ASSISTED
+  MANUAL
+  SIMULATED
+}
+
+enum Confidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum RecommendationKind {
+  DOUBLE_DOWN
+  EXPERIMENT
+  TIMING
+  FORMAT
+  CTA
+}
+
+enum RecommendationStatus {
+  OPEN
+  ACCEPTED
+  DISMISSED
+  SUPERSEDED
+}
+
+enum ExperimentStatus {
+  DRAFT
+  RUNNING
+  CONCLUDED
+  ABANDONED
+}
+
+enum ExperimentRole {
+  CONTROL
+  VARIANT
+}
+
+enum TrendMomentum {
+  RISING
+  STEADY
+  FALLING
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  WORKER
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         Role      @default(OWNER)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions        UserSession[]
+  uploadedAssets  ContentAsset[]   @relation("AssetUploader")
+  createdVariants ContentVariant[] @relation("VariantAuthor")
+  approvedPosts   Post[]           @relation("PostApprover")
+  activity        ActivityLog[]
+}
+
+/// Opaque server-side session. Only a hash of the token is stored, so a database
+/// leak does not hand out live sessions.
+model UserSession {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Projects and brand context
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String        @id @default(cuid())
+  slug        String        @unique
+  name        String
+  description String?
+  status      ProjectStatus @default(ACTIVE)
+  /// Hex accent used to colour-code the project across the UI.
+  accentColor String        @default("#6366f1")
+  publishPolicy PublishPolicy @default(MANUAL_APPROVAL)
+  timezone    String        @default("UTC")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  brand           Brand?
+  pillars         ContentPillar[]
+  hashtags        Hashtag[]
+  accounts        SocialAccount[]
+  assets          ContentAsset[]
+  posts           Post[]
+  schedules       Schedule[]
+  trends          Trend[]
+  experiments     Experiment[]
+  recommendations Recommendation[]
+  activity        ActivityLog[]
+}
+
+/// The voice of a project. Kept separate from Project so brand copy can evolve
+/// without touching operational fields.
+model Brand {
+  id            String   @id @default(cuid())
+  projectId     String   @unique
+  audience      String
+  tone          String
+  valueProp     String
+  website       String?
+  primaryCta    String
+  bannedPhrases String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model ContentPillar {
+  id          String   @id @default(cuid())
+  projectId   String
+  slug        String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  project Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assets  ContentAsset[]
+
+  @@unique([projectId, slug])
+  @@index([projectId])
+}
+
+model Hashtag {
+  id         String   @id @default(cuid())
+  projectId  String
+  tag        String
+  usageCount Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, tag])
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// Social accounts and browser sessions
+// ---------------------------------------------------------------------------
+
+model SocialAccount {
+  id            String        @id @default(cuid())
+  projectId     String
+  platform      Platform
+  handle        String
+  displayName   String?
+  status        AccountStatus @default(DISCONNECTED)
+  externalId    String?
+  lastCheckedAt DateTime?
+  lastError     String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  session       PlatformSession?
+  postPlatforms PostPlatform[]
+
+  @@unique([projectId, platform, handle])
+  @@index([projectId])
+  @@index([platform, status])
+}
+
+/// An encrypted Playwright storageState. No passwords are ever stored: the
+/// operator logs in by hand and we keep only the resulting session blob,
+/// AES-256-GCM encrypted with SESSION_ENCRYPTION_KEY.
+model PlatformSession {
+  id              String                @id @default(cuid())
+  socialAccountId String                @unique
+  status          PlatformSessionStatus @default(ACTIVE)
+  cipherText      String
+  iv              String
+  authTag         String
+  algorithm       String                @default("aes-256-gcm")
+  capturedAt      DateTime              @default(now())
+  lastVerifiedAt  DateTime?
+  expiresAt       DateTime?
+
+  account SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Content
+// ---------------------------------------------------------------------------
+
+model ContentAsset {
+  id               String      @id @default(cuid())
+  projectId        String
+  uploaderId       String?
+  pillarId         String?
+  kind             AssetKind
+  status           AssetStatus @default(UPLOADED)
+  title            String
+  originalFilename String
+  storageKey       String
+  thumbnailKey     String?
+  mimeType         String
+  sizeBytes        Int
+  /// Content hash. Uniqueness stops the same file entering one project twice.
+  checksum         String
+  durationSeconds  Float?
+  width            Int?
+  height           Int?
+  aspectRatio      String?
+  hasAudio         Boolean?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  project  Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User?            @relation("AssetUploader", fields: [uploaderId], references: [id], onDelete: SetNull)
+  pillar   ContentPillar?   @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  analyses AIAnalysis[]
+  variants ContentVariant[]
+  posts    Post[]
+
+  @@unique([projectId, checksum])
+  @@index([projectId, status])
+  @@index([createdAt])
+}
+
+/// One analysis run over an asset. Append-only so we can compare providers and
+/// see how suggestions changed over time.
+model AIAnalysis {
+  id             String        @id @default(cuid())
+  assetId        String
+  provider       String
+  model          String
+  format         ContentFormat @default(UNKNOWN)
+  topic          String?
+  likelyAudience String?
+  visualSummary  String?
+  transcript     String?
+  /// Full provider payload, kept for auditability.
+  raw            Json
+  createdAt      DateTime      @default(now())
+
+  asset ContentAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, createdAt])
+}
+
+/// One copy treatment of an asset. Variants are the unit of experimentation.
+model ContentVariant {
+  id          String   @id @default(cuid())
+  assetId     String
+  createdById String?
+  label       String
+  hook        String
+  caption     String
+  hashtags    String[] @default([])
+  cta         String
+  isControl   Boolean  @default(false)
+  /// AI heuristic scores (hook/clarity/curiosity/cta/trend). Not predictions.
+  scorecard   Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  asset              ContentAsset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy          User?               @relation("VariantAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  posts              Post[]
+  experimentVariants ExperimentVariant[]
+
+  @@index([assetId])
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling and publishing
+// ---------------------------------------------------------------------------
+
+model Post {
+  id             String        @id @default(cuid())
+  projectId      String
+  assetId        String
+  variantId      String
+  experimentId   String?
+  status         PostStatus    @default(DRAFT)
+  approvalState  ApprovalState @default(PENDING)
+  approvedById   String?
+  approvedAt     DateTime?
+  rejectedReason String?
+  scheduledFor   DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  asset      ContentAsset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  variant    ContentVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  experiment Experiment?    @relation(fields: [experimentId], references: [id], onDelete: SetNull)
+  approvedBy User?          @relation("PostApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  targets    PostPlatform[]
+
+  @@index([projectId, status])
+  @@index([scheduledFor])
+  @@index([approvalState])
+}
+
+/// A post's delivery to one social account. Publishing and analytics both hang
+/// off this row, because the same creative behaves differently per platform.
+model PostPlatform {
+  id              String             @id @default(cuid())
+  postId          String
+  socialAccountId String
+  platform        Platform
+  status          PostPlatformStatus @default(PENDING)
+  remotePostId    String?
+  permalink       String?
+  publishedAt     DateTime?
+  lastError       String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  post      Post                @relation(fields: [postId], references: [id], onDelete: Cascade)
+  account   SocialAccount       @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  job       PublishJob?
+  snapshots AnalyticsSnapshot[]
+
+  @@unique([postId, socialAccountId])
+  @@index([status])
+  @@index([platform, publishedAt])
+}
+
+model Schedule {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  timezone  String   @default("UTC")
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  project Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  slots   ScheduleSlot[]
+
+  @@index([projectId])
+}
+
+/// A recurring posting window, stored relationally rather than as a JSON blob so
+/// the calendar and the recommendation engine can both query it.
+model ScheduleSlot {
+  id          String    @id @default(cuid())
+  scheduleId  String
+  /// 0 = Sunday .. 6 = Saturday
+  dayOfWeek   Int
+  /// Minutes past local midnight.
+  minuteOfDay Int
+  platform    Platform?
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, dayOfWeek, minuteOfDay, platform])
+  @@index([scheduleId])
+}
+
+/// Exactly one job per PostPlatform. `idempotencyKey` is unique, which is what
+/// makes "never publish the same thing twice" a database guarantee rather than
+/// an application convention.
+model PublishJob {
+  id             String    @id @default(cuid())
+  postPlatformId String    @unique
+  idempotencyKey String    @unique
+  status         JobStatus @default(PENDING)
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3)
+  runAt          DateTime
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  lastError      String?
+  queueJobId     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  postPlatform PostPlatform     @relation(fields: [postPlatformId], references: [id], onDelete: Cascade)
+  attemptLog   PublishAttempt[]
+
+  @@index([status, runAt])
+}
+
+model PublishAttempt {
+  id            String          @id @default(cuid())
+  jobId         String
+  attemptNo     Int
+  outcome       AttemptOutcome?
+  startedAt     DateTime        @default(now())
+  finishedAt    DateTime?
+  errorMessage  String?
+  screenshotKey String?
+  /// Timestamped step log for the run, shown verbatim in the job drawer.
+  steps         Json            @default("[]")
+
+  job PublishJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, attemptNo])
+  @@index([jobId])
+}
+
+// ---------------------------------------------------------------------------
+// Analytics and learning
+// ---------------------------------------------------------------------------
+
+/// Append-only metric capture. Multiple snapshots per post are expected; nothing
+/// here is ever updated in place.
+model AnalyticsSnapshot {
+  id               String       @id @default(cuid())
+  postPlatformId   String
+  capturedAt       DateTime     @default(now())
+  /// Age bucket at capture time: "1h", "24h", "7d", "30d".
+  windowLabel      String
+  source           MetricSource @default(SIMULATED)
+  views            Int          @default(0)
+  likes            Int          @default(0)
+  comments         Int          @default(0)
+  shares           Int          @default(0)
+  saves            Int          @default(0)
+  profileVisits    Int          @default(0)
+  linkClicks       Int          @default(0)
+  conversions      Int          @default(0)
+  followerDelta    Int          @default(0)
+  watchTimeSeconds Float        @default(0)
+  /// 0..1 fraction of viewers reaching the end.
+  completionRate   Float        @default(0)
+
+  postPlatform PostPlatform @relation(fields: [postPlatformId], references: [id], onDelete: Cascade)
+
+  @@unique([postPlatformId, windowLabel, capturedAt])
+  @@index([postPlatformId, capturedAt])
+  @@index([windowLabel])
+}
+
+model Trend {
+  id               String        @id @default(cuid())
+  projectId        String?
+  platform         Platform
+  topic            String
+  momentum         TrendMomentum @default(STEADY)
+  /// 0..1 relevance to the project's brand context.
+  relevanceScore   Float         @default(0)
+  recommendedAngle String?
+  source           String
+  observedAt       DateTime      @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, observedAt])
+}
+
+model Experiment {
+  id              String           @id @default(cuid())
+  projectId       String
+  name            String
+  hypothesis      String
+  /// Metric the winner is decided on, e.g. "views" or "completionRate".
+  metric          String           @default("views")
+  status          ExperimentStatus @default(DRAFT)
+  startedAt       DateTime?
+  endedAt         DateTime?
+  winnerVariantId String?
+  conclusion      String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  project  Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  variants ExperimentVariant[]
+  posts    Post[]
+
+  @@index([projectId, status])
+}
+
+model ExperimentVariant {
+  id           String         @id @default(cuid())
+  experimentId String
+  variantId    String
+  role         ExperimentRole
+
+  experiment Experiment     @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  variant    ContentVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([experimentId, variantId])
+}
+
+/// A concrete, evidence-backed suggestion. `evidence` always carries the numbers
+/// the suggestion was derived from so the UI can show its work.
+model Recommendation {
+  id                  String               @id @default(cuid())
+  projectId           String
+  kind                RecommendationKind
+  status              RecommendationStatus @default(OPEN)
+  title               String
+  rationale           String
+  confidence          Confidence           @default(LOW)
+  evidence            Json
+  suggestedHook       String?
+  suggestedFormat     ContentFormat?
+  suggestedMinSeconds Int?
+  suggestedMaxSeconds Int?
+  /// Local-time posting window, minutes past midnight.
+  windowStartMinute   Int?
+  windowEndMinute     Int?
+  /// Expected performance as a multiple of the project's median views.
+  expectedLift        Float?
+  sampleSize          Int                  @default(0)
+  createdAt           DateTime             @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status, confidence])
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+model ActivityLog {
+  id         String    @id @default(cuid())
+  projectId  String?
+  userId     String?
+  actorType  ActorType @default(SYSTEM)
+  action     String
+  message    String
+  entityType String?
+  entityId   String?
+  metadata   Json      @default("{}")
+  createdAt  DateTime  @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([projectId, createdAt])
+  @@index([entityType, entityId])
+}

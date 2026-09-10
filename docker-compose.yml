@@ -1,0 +1,40 @@
+# Local infrastructure for CONTENT OS.
+# Ports are offset from the defaults so they never collide with a
+# Postgres/Redis you may already be running on this machine.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: contentos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: contentos
+      POSTGRES_PASSWORD: contentos
+      POSTGRES_DB: contentos
+    ports:
+      - "55432:5432"
+    volumes:
+      - contentos-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contentos -d contentos"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: contentos-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "56379:6379"
+    volumes:
+      - contentos-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  contentos-pgdata:
+  contentos-redisdata:
