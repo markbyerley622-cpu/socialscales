@@ -30,10 +30,16 @@ function clean(value: string | undefined): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * The subject line of a commit message.
+ *
+ * A full body can run to a kilobyte of prose, which makes a health response
+ * unreadable in a terminal and tells an operator nothing they cannot get from
+ * `git show`.
+ */
 function firstLine(value: string | null): string | null {
   if (value === null) return null;
-  const line = value.split("
-", 1)[0]?.trim() ?? "";
+  const line = value.split(/\r?\n/, 1)[0]?.trim() ?? "";
   return line.length > 0 ? line.slice(0, 120) : null;
 }
 
@@ -49,9 +55,6 @@ export function buildInfo(): BuildInfo {
     commitShort: commit ? commit.slice(0, 7) : null,
     branch:
       clean(process.env.VERCEL_GIT_COMMIT_REF) ?? clean(process.env.GIT_BRANCH),
-    // Subject only. The full body can run to a kilobyte of prose, which makes a
-    // health response unreadable in a terminal and tells an operator nothing
-    // they cannot get from `git show`.
     message: firstLine(clean(process.env.VERCEL_GIT_COMMIT_MESSAGE)),
     builtOn: clean(process.env.VERCEL) ? "vercel" : "local",
     environment: clean(process.env.VERCEL_ENV) ?? process.env.NODE_ENV ?? "unknown",
