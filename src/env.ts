@@ -2,7 +2,20 @@ import "./lib/load-env";
 
 /**
  * Single place where process.env is read. Everything else imports from here so
- * a missing variable fails loudly at boot instead of at 2am inside a job.
+ * a missing variable fails loudly instead of at 2am inside a job.
+ *
+ * The three required values are exposed as **getters**, so they throw when they
+ * are used rather than when this module is imported. That distinction decides
+ * what a misconfigured deployment looks like:
+ *
+ *   Eager (what this used to do) — `next build` dies while collecting page
+ *   data, the deployment never ships, and the host keeps serving the last
+ *   build that worked. On this project that meant a stale bundle quietly
+ *   serving demo fixtures, which is the worst possible failure: invisible.
+ *
+ *   Lazy (what it does now) — the build succeeds, the deployment ships, and
+ *   the first request that needs a database gets an explicit configuration
+ *   error. Loud, attributable, and impossible to mistake for real data.
  */
 function required(name: string): string {
   const value = process.env[name];
@@ -41,15 +54,21 @@ function flag(name: string, fallback = false): boolean {
 }
 
 export const env = {
-  databaseUrl: required("DATABASE_URL"),
+  get databaseUrl(): string {
+    return required("DATABASE_URL");
+  },
   redisUrl: optional("REDIS_URL", "redis://localhost:56379"),
   /**
    * Redis key namespace for the job queues. Overridden by the test suite so a
    * Redis-backed test can never consume or delete development jobs.
    */
   queuePrefix: optional("QUEUE_PREFIX", "bull"),
-  sessionEncryptionKey: required("SESSION_ENCRYPTION_KEY"),
-  authCookieSecret: required("AUTH_COOKIE_SECRET"),
+  get sessionEncryptionKey(): string {
+    return required("SESSION_ENCRYPTION_KEY");
+  },
+  get authCookieSecret(): string {
+    return required("AUTH_COOKIE_SECRET");
+  },
   storageDir: optional("STORAGE_DIR", "./storage"),
   aiProvider: optional("AI_PROVIDER", "heuristic"),
   /**

@@ -144,16 +144,35 @@ export async function enqueueRender(input: {
   };
 }
 
+/**
+ * Puts a render on the queue.
+ *
+ * The custom job id makes a duplicate `add` a no-op, which is what stops two
+ * deliveries of the same in-flight render. It also has a sharp edge: BullMQ
+ * keeps finished jobs for days, and it ignores `add()` for *any* id it already
+ * holds — including a completed one. So re-queuing a render that has run before
+ * silently did nothing. The row said PENDING, Redis had nothing waiting, and
+ * the job sat there for ever looking like it was about to start.
+ *
+ * A terminal job is therefore removed before the new one is added. In-flight
+ * jobs are left alone, so the duplicate protection that matters is unchanged.
+ */
 async function addToQueue(renderJobId: string): Promise<
   { ok: true } | { ok: false; error: string }
 > {
+  const jobId = queueJobId("render", renderJobId);
   try {
-    await queues.rendering().add(
-      "render",
-      { renderJobId },
-      // The job id makes a duplicate `add` a no-op rather than a second render.
-      { jobId: queueJobId("render", renderJobId) },
-    );
+    const queue = queues.rendering();
+
+    const existing = await queue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === "completed" || state === "failed") {
+        await existing.remove();
+      }
+    }
+
+    await queue.add("render", { renderJobId }, { jobId });
     return { ok: true };
   } catch (error) {
     return {

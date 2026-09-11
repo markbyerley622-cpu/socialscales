@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 
 import { PageHero } from "@/components/shell/page-hero";
+import { ErrorState } from "@/components/ui/primitives";
 import { SettingsWorkspace } from "@/features/settings/settings-workspace";
 import { getAdapter, resolveDataSource } from "@/lib/social-scales";
 
 export const metadata: Metadata = { title: "Settings" };
+export const dynamic = "force-dynamic";
 
 const LABELS = {
   prisma: "Live database",
@@ -13,11 +15,35 @@ const LABELS = {
 } as const;
 
 export default async function SettingsPage() {
-  const adapter = getAdapter();
-  // Reported, not inferred: this is the same resolution the adapter used, so
-  // the screen cannot claim one source while the data came from another.
+  // Resolved before the adapter is touched. A misconfigured deployment has to
+  // be able to *say so on this screen* — which it cannot do if loading the
+  // workspace throws first, and cannot do reliably through the error boundary
+  // either, because Next replaces server error messages with an opaque digest
+  // in production builds.
   const source = resolveDataSource();
-  const [workspace, onboarding] = await Promise.all([adapter.getWorkspace(), adapter.getOnboardingState()]);
+
+  if (!source.ok) {
+    return (
+      <div className="flex flex-col gap-5">
+        <PageHero
+          title="Workspace"
+          accentWord="settings"
+          subtitle="Brand context, content defaults and the rules the system operates under."
+          kicker={["Brand", "Defaults", "Approvals", "Notifications"]}
+        />
+        <ErrorState
+          title="Backend unavailable — this deployment is not configured"
+          detail={`${source.problem} Nothing is being shown from fixtures: this screen is empty because the real data source cannot be reached, which is deliberate.`}
+        />
+      </div>
+    );
+  }
+
+  const adapter = getAdapter();
+  const [workspace, onboarding] = await Promise.all([
+    adapter.getWorkspace(),
+    adapter.getOnboardingState(),
+  ]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -31,21 +57,12 @@ export default async function SettingsPage() {
       <SettingsWorkspace
         workspace={workspace}
         profile={onboarding.draft}
-        dataSource={
-          source.ok
-            ? {
-                mode: source.mode,
-                label: LABELS[source.mode],
-                summary: source.summary,
-                isDemo: source.isDemo,
-              }
-            : {
-                mode: source.requested,
-                label: "Misconfigured",
-                summary: source.problem,
-                isDemo: false,
-              }
-        }
+        dataSource={{
+          mode: source.mode,
+          label: LABELS[source.mode],
+          summary: source.summary,
+          isDemo: source.isDemo,
+        }}
       />
     </div>
   );
