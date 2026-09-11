@@ -18,7 +18,7 @@ export type BuildInfo = {
   /** First 7 characters, for reading against `git log --oneline`. */
   commitShort: string | null;
   branch: string | null;
-  /** The commit subject, when the host provides it. */
+  /** The commit *subject* only — the first line, never the whole body. */
   message: string | null;
   /** "vercel", "local", or whatever else built it. */
   builtOn: string;
@@ -28,6 +28,13 @@ export type BuildInfo = {
 function clean(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function firstLine(value: string | null): string | null {
+  if (value === null) return null;
+  const line = value.split("
+", 1)[0]?.trim() ?? "";
+  return line.length > 0 ? line.slice(0, 120) : null;
 }
 
 export function buildInfo(): BuildInfo {
@@ -42,7 +49,10 @@ export function buildInfo(): BuildInfo {
     commitShort: commit ? commit.slice(0, 7) : null,
     branch:
       clean(process.env.VERCEL_GIT_COMMIT_REF) ?? clean(process.env.GIT_BRANCH),
-    message: clean(process.env.VERCEL_GIT_COMMIT_MESSAGE),
+    // Subject only. The full body can run to a kilobyte of prose, which makes a
+    // health response unreadable in a terminal and tells an operator nothing
+    // they cannot get from `git show`.
+    message: firstLine(clean(process.env.VERCEL_GIT_COMMIT_MESSAGE)),
     builtOn: clean(process.env.VERCEL) ? "vercel" : "local",
     environment: clean(process.env.VERCEL_ENV) ?? process.env.NODE_ENV ?? "unknown",
   };
