@@ -852,3 +852,41 @@ rather than a loosened rule.
 Phase 8 fixture had hung the variant straight off the cut, a shape the system
 never produces. The fixture now models the real one and two regression tests
 cover both directions of the rule.
+
+---
+
+## 2026-09-15 · `/api/health` reports auth configuration, not just data source
+
+**Context.** Production shipped to Vercel without `AUTH_COOKIE_SECRET`. Every
+signal said it was healthy: the build succeeded, `/api/health` returned
+`status: "ok"`, `/login` rendered, and a *wrong* password returned the ordinary
+"does not match". The variable was first read at the worst possible moment — the
+first *correct* password, when `login` signs the session cookie — and produced an
+opaque 500 with an error digest. `PRODUCTION_ENV.md` already promised that a
+missing required variable "reports `status: "misconfigured"` on `/api/health`";
+that was implemented for `DATABASE_URL` and for nothing else.
+
+**Decision.** A new `resolveAuthConfig()` (`src/server/auth/config.ts`) checks
+`AUTH_COOKIE_SECRET` and `SESSION_ENCRYPTION_KEY`, and `/api/health` reports the
+result as `auth` and refuses to say `ok` when it is broken. Presence and format
+only, never a value — the endpoint is public.
+
+**Alternatives.** Validating both eagerly in `src/env.ts` (rejected: that is the
+build-time failure mode commit 678f142 deliberately removed, because a failed
+build leaves the host serving a stale bundle). Surfacing the configuration error
+on the login page itself (rejected: it tells an unauthenticated visitor what is
+wrong with the deployment, and health is the place that already does this).
+
+**Rationale.** Lazy env getters are the right trade — ship, then say so — but
+only the first half was built. Nothing *said so* until a human hit the one code
+path that read the variable. Health is polled, unauthenticated, and already
+carries `dataSource.problem` for exactly this purpose.
+
+**Consequences.** A deployment missing either variable now returns 503 from
+`/api/health`, so anything polling it will notice; the database counts are still
+reported, because losing them on a configuration fault would trade one blind
+spot for another. Only constraints the code already enforces are reported —
+`SESSION_ENCRYPTION_KEY` gets a 64-hex check because `crypto.ts` throws on
+anything else, while `AUTH_COOKIE_SECRET` is presence-only, since no code
+enforces the 64+ characters `PRODUCTION_ENV.md` recommends and failing a working
+deployment over a recommendation is how a check becomes noise.

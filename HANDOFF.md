@@ -24,9 +24,9 @@ database state with fixtures structurally impossible — and the database is
 | | |
 |---|---|
 | Repository | `github.com/markbyerley622-cpu/socialscales`, branch `main` |
-| Local = remote = production | `fb65b0c` |
+| Local = remote = production | `38426f4` and later |
 | Production URL | https://socialscales.vercel.app |
-| Health | `/api/health` → `status: ok` |
+| Health | `/api/health` → `status: misconfigured` — `AUTH_COOKIE_SECRET` unset; see below |
 | Data source | `mode: prisma`, `isDemo: false` |
 | Database | Neon, reachable, 10 migrations applied |
 | Row counts | `projects: 0, posts: 0, socialAccounts: 0, snapshots: 0` |
@@ -41,31 +41,60 @@ confirming what production runs is one request — it previously took a 404 prob
 
 ## The one thing blocking everything else
 
-The production database has no operator, so nobody can sign in, so no project
-exists, so nothing can be rendered or published.
+`AUTH_COOKIE_SECRET` is not set on Vercel, so **nobody can sign in** — and the
+deployment cannot tell you that from the outside without this being fixed.
 
-**Run this.** It needs your Neon URL, which is deliberately not stored here or
-anywhere in the repository:
+The operator exists (`npm run db:operator` was run against Neon successfully).
+Authentication itself works: a correct password is verified, the session row is
+written, `lastLoginAt` is stamped — and then `login` signs the session cookie,
+reads the missing variable, and throws. The browser gets Next's static 500,
+"This page couldn’t load / A server error occurred", with an error digest.
+
+Every other signal said the deployment was fine, which is why this cost a
+debugging cycle. A *wrong* password returned the ordinary "does not match",
+because `authenticate` returns before any cookie is signed. `src/proxy.ts`
+treats an absent secret as "no valid session" and quietly redirects every
+protected route to `/login`. `/api/health` said `status: "ok"`.
+
+**Set both secrets on Vercel** (Production scope), then redeploy:
 
 ```bash
-DATABASE_URL="<your Neon pooled URL>" \
-OPERATOR_EMAIL="you@example.com" \
-OPERATOR_PASSWORD="<at least 12 characters>" \
-npm run db:operator
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))" # AUTH_COOKIE_SECRET
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"       # SESSION_ENCRYPTION_KEY
 ```
 
-Then sign in at `/login` and create a project at `/ops/projects`.
+`SESSION_ENCRYPTION_KEY` is not needed to sign in — only the worker's stored
+browser profiles use it — but `PRODUCTION_ENV.md` requires both on both hosts,
+and `/api/health` now checks both. Changing `AUTH_COOKIE_SECRET` later signs
+everyone out.
 
-`prisma/create-operator.ts` creates one workspace and one user and nothing else.
-It is **not** `prisma/seed.ts`, which builds a 719-line demonstration dataset —
-projects, posts, publish jobs, experiments — and must never be run against
-production.
+`/api/health` reports this directly now: `auth.usable` is `false` and
+`auth.problems` names the variable. A deployment nobody can sign in to returns
+503 and does not call itself `ok`.
 
----
+### And then: there is no way to create a project
+
+Verified 2026-09-15 against an empty database with a working sign-in. A
+freshly bootstrapped operator lands on `/onboarding`, which renders correctly —
+and cannot be completed, because `saveOnboardingDraft` requires a Project and
+throws `NOT_CONFIGURED` without one.
+
+There is no Project-creation path anywhere in the product. The only
+`prisma.project.create` in the repository is in `prisma/seed.ts`, which must
+never run against production. `/ops/projects` shows "No projects yet. Run
+`npm run db:seed` to create the three demo projects, or add one from Settings" —
+the first half is actively dangerous advice in production and the second half is
+false; Settings has no such form. The adapter interface has no create method
+either.
+
+So the next piece of work is a `prisma/create-project.ts` bootstrap in the shape
+of `create-operator.ts` — one project, from values the operator supplies,
+nothing else — plus corrected empty-state copy. Until then, an operator can sign
+in and cannot use the product.
 
 ## What is finished after that, and what is not
 
-### Finished once an operator exists
+### Finished once an operator exists and a project does
 
 Sign-in, projects, brands, objectives, audiences, strategy, plans, briefs,
 asset upload, analysis, copy variants, treatments, approvals, scheduling,
@@ -108,7 +137,9 @@ No TikTok work has been performed. The gate is:
 - [x] production runs the intended commit
 - [x] hosted Postgres connected, migrations applied
 - [x] fixture fallback impossible in production
-- [ ] an operator exists and a project has been created
+- [x] an operator exists
+- [ ] sign-in works (`AUTH_COOKIE_SECRET` on Vercel)
+- [ ] a project has been created (no path exists yet — see above)
 - [ ] persistent worker attached
 - [ ] shared media storage configured
 
@@ -151,11 +182,11 @@ worker problem and is not.
 
 ```bash
 npm run typecheck && npm run lint && npm test && npm run build
-curl -s https://socialscales.vercel.app/api/health | jq '{status, build, dataSource, database, worker}'
+curl -s https://socialscales.vercel.app/api/health | jq '{status, build, dataSource, auth, database, worker}'
 ```
 
-`status` must be `ok`, `dataSource.isDemo` must be `false`, and
-`build.commitShort` must match what you pushed.
+`status` must be `ok`, `dataSource.isDemo` must be `false`, `auth.usable` must
+be `true`, and `build.commitShort` must match what you pushed.
 
 Check gates by **exit code**, not by reading output — `cmd | tail` returns
 `tail`'s status, and a failing typecheck read as passing once already.
